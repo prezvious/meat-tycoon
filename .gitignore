@@ -12,9 +12,6 @@ supabase/.temp/
 # Playwright MCP artifacts
 .playwright-mcp/
 
-# Exclude test files
-tests/
-
 # Exclude generated/temporary media
 *.png
 *.jpg
