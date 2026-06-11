@@ -1,0 +1,41 @@
+{
+  "name": "meat-tycoon",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint . --max-warnings=0",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test tests/*.test.mjs",
+    "catalog:verify": "node scripts/verify-catalog.mjs",
+    "simulate:weights": "node scripts/simulate-weight-system.mjs --samples=100000000",
+    "seed:catalog": "node --env-file=.env.local scripts/seed-catalog.mjs",
+    "verify": "npm run catalog:verify && npm run test && npm run lint && npm run typecheck && npm run build"
+  },
+  "dependencies": {
+    "@ant-design/nextjs-registry": "^1.0.2",
+    "@ant-design/v5-patch-for-react-19": "^1.0.3",
+    "@iconify-icon/react": "^3.0.0",
+    "@supabase/ssr": "^0.6.1",
+    "@supabase/supabase-js": "^2.47.10",
+    "antd": "^5.22.5",
+    "next": "^15.0.3",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.1",
+    "@types/react": "^19.0.1",
+    "@types/react-dom": "^19.0.1",
+    "eslint": "^9.16.0",
+    "eslint-config-next": "^15.0.3",
+    "typescript": "^5.7.2"
+  },
+  "overrides": {
+    "postcss": "^8.5.10"
+  }
+}

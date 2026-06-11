@@ -1,0 +1,32 @@
+.next/
+node_modules/
+out/
+dist/
+coverage/
+.env
+.env*.local
+*.tsbuildinfo
+supabase/.branches/
+supabase/.temp/
+
+# Playwright MCP artifacts
+.playwright-mcp/
+
+# Exclude test files
+tests/
+
+# Exclude generated/temporary media
+*.png
+*.jpg
+*.jpeg
+*.gif
+
+# Exclude all markdown files by default (reports, plans, scratch files, etc.)
+*.md
+
+# Whitelist README.md and catalog data files required by the system
+!README.md
+!base-meat-values.md
+!equipment-list.md
+!seasoning-list.md
+!Weight-Profiles-Per-Meat.md
