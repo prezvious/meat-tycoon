@@ -2,10 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   calculateExpectedWeight,
+  loadExtraMeatCookingPreview,
   loadCatalogFromDocs,
   STAGE_BREAK_EVEN_TARGETS,
   validateCatalog
 } from '../src/lib/catalog/catalog-parser.mjs';
+import { BELOW_LEGENDARY_COOKING_MAX_SECONDS } from '../src/lib/game/formulas.mjs';
 
 test('catalog parser converts markdown source docs into launch data', () => {
   const catalog = loadCatalogFromDocs(process.cwd());
@@ -27,6 +29,8 @@ test('starter economy essentials are present', () => {
   assert.equal(chickenFeet?.starterOnly, true);
   assert.equal(countertopOven?.purchasePrice, '0.00');
   assert.equal(countertopOven?.priceMultiplier, 1.1);
+  assert.ok(countertopOven?.cookingSpeedMultiplier >= 1);
+  assert.ok(countertopOven?.cookingSpeedMultiplier <= 2);
   assert.equal(countertopOven?.cookingSlotCount, 1);
 });
 
@@ -101,4 +105,49 @@ test('runtime base values meet stage break-even targets on expected weight', () 
       `${meat.id} should meet Stage ${meat.shopStage} break-even target`
     );
   }
+});
+
+test('live meat catalog includes generated default cooking times', () => {
+  const catalog = loadCatalogFromDocs(process.cwd(), { cookingTimingSeed: 'catalog-test' });
+
+  for (const meat of catalog.meats) {
+    assert.ok(meat.defaultWeightKg >= 1, `${meat.id} should have a default timing weight`);
+    assert.ok(meat.defaultCookedSeconds >= 30, `${meat.id} should have cooked seconds`);
+    assert.ok(
+      meat.defaultCookedSeconds < meat.defaultWellCookedSeconds,
+      `${meat.id} cooked time should be below well-cooked time`
+    );
+    assert.ok(
+      meat.defaultWellCookedSeconds < meat.defaultPerfectlyCookedSeconds,
+      `${meat.id} well-cooked time should be below perfectly-cooked time`
+    );
+
+    if (!meat.legendaryCookingEligible) {
+      assert.ok(
+        meat.defaultPerfectlyCookedSeconds <= BELOW_LEGENDARY_COOKING_MAX_SECONDS,
+        `${meat.id} below-legendary timing should cap at two hours`
+      );
+    }
+  }
+});
+
+test('cooking timing generation is reproducible for the same seed', () => {
+  const first = loadCatalogFromDocs(process.cwd(), { cookingTimingSeed: 'repeatable-seed' });
+  const second = loadCatalogFromDocs(process.cwd(), { cookingTimingSeed: 'repeatable-seed' });
+  const firstMeat = first.meats.find((meat) => meat.id === 'a5_japanese_kobe_beef');
+  const secondMeat = second.meats.find((meat) => meat.id === 'a5_japanese_kobe_beef');
+
+  assert.equal(firstMeat?.defaultPerfectlyCookedSeconds, secondMeat?.defaultPerfectlyCookedSeconds);
+});
+
+test('extra meat lists produce non-playable cooking preview rows with suffixed duplicates', () => {
+  const preview = loadExtraMeatCookingPreview(process.cwd(), { cookingTimingSeed: 'extra-preview-test' });
+  const ids = new Set(preview.map((row) => row.id));
+
+  assert.equal(preview.length, 432);
+  assert.equal(ids.size, preview.length);
+  assert.ok(ids.has('sage_breakfast_sausage_roll'));
+  assert.ok(ids.has('sage_breakfast_sausage_roll_2'));
+  assert.equal(preview.every((row) => row.enabled === false), true);
+  assert.equal(preview.every((row) => row.defaultWeightKg >= 1), true);
 });

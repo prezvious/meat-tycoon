@@ -1,5 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import {
+  calculateEquipmentCookingSpeedMultiplier,
+  createSeededRandom,
+  DEFAULT_COOKING_TIMING_SEED,
+  generateDefaultCookingTimes
+} from '../game/formulas.mjs';
 
 const DEFAULT_WEIGHT_PROFILE = 'medium_cut_standard';
 const WEIGHT_FLOOR_KG = 1;
@@ -71,6 +77,10 @@ function parseMultiplier(value) {
   return Number(value.replace(/[,x]/g, '').trim());
 }
 
+function parseWeightKg(value) {
+  return Math.max(WEIGHT_FLOOR_KG, Number(String(value).replace(/kg/i, '').trim()) || WEIGHT_FLOOR_KG);
+}
+
 function tierToStage(tier) {
   return STAGE_BY_TIER[tier.toLowerCase()] ?? 2;
 }
@@ -140,6 +150,35 @@ function balanceMeatBaseValues(meats, weightProfiles) {
     return {
       ...meat,
       baseMeatValue: formatMoney(baseMeatValue)
+    };
+  });
+}
+
+function addCookingTimingToMeats(meats, weightProfiles, options = {}) {
+  const profileById = new Map(weightProfiles.map((profile) => [profile.id, profile]));
+  const random = options.random ?? createSeededRandom(options.cookingTimingSeed ?? DEFAULT_COOKING_TIMING_SEED);
+
+  return meats.map((meat) => {
+    const profile = profileById.get(meat.weightProfileId);
+    const defaultWeightKg = profile
+      ? calculateExpectedWeight(profile)
+      : WEIGHT_FLOOR_KG;
+    const cookingTimes = generateDefaultCookingTimes(
+      {
+        ...meat,
+        defaultWeightKg,
+        tags: meat.meatTags
+      },
+      random
+    );
+
+    return {
+      ...meat,
+      defaultWeightKg: cookingTimes.defaultWeightKg,
+      defaultCookedSeconds: cookingTimes.defaultCookedSeconds,
+      defaultWellCookedSeconds: cookingTimes.defaultWellCookedSeconds,
+      defaultPerfectlyCookedSeconds: cookingTimes.defaultPerfectlyCookedSeconds,
+      legendaryCookingEligible: cookingTimes.legendaryCookingEligible
     };
   });
 }
@@ -310,13 +349,18 @@ export function parseEquipmentCatalog(markdown) {
 
     const displayName = match[1].trim();
     const tags = [slugify(equipmentType), ...displayName.split(/\s+/).map(slugify)].filter(Boolean);
+    const purchasePrice = parseMoney(match[2]);
 
     equipment.push({
       id: slugify(displayName),
       displayName,
       equipmentType,
-      purchasePrice: parseMoney(match[2]),
+      purchasePrice,
       priceMultiplier: parseMultiplier(match[3]),
+      cookingSpeedMultiplier: calculateEquipmentCookingSpeedMultiplier({
+        equipmentType,
+        purchasePrice
+      }),
       cookingSlotCount: inferEquipmentSlots(displayName),
       unlockRequirementId: null,
       equipmentTags: [...new Set(tags)],
@@ -325,6 +369,60 @@ export function parseEquipmentCatalog(markdown) {
   }
 
   return dedupeById(equipment);
+}
+
+function isAdditionalMeatLine(line) {
+  if (!line.startsWith('|')) return false;
+  if (line.includes('---')) return false;
+  return true;
+}
+
+function hasAdditionalMeatColumns(columns) {
+  if (columns[0] === '#') return false;
+  if (columns.length < 7) return false;
+  if (!columns[0]) return false;
+  if (!columns[1]) return false;
+  return true;
+}
+
+export function parseAdditionalMeatTimingList(markdown, sourceFile) {
+  const rows = [];
+
+  for (const line of markdown.split(/\r?\n/)) {
+    if (!isAdditionalMeatLine(line)) {
+      continue;
+    }
+
+    const columns = line
+      .split('|')
+      .slice(1, -1)
+      .map((column) => column.trim());
+
+    if (!hasAdditionalMeatColumns(columns)) {
+      continue;
+    }
+
+    const displayName = columns[1];
+    const meatTags = columns[4]
+      .split(',')
+      .map((tag) => slugify(tag.trim()))
+      .filter(Boolean);
+
+    rows.push({
+      sourceFile,
+      sourceIndex: Number(columns[0]),
+      id: slugify(displayName),
+      displayName,
+      defaultWeightKg: parseWeightKg(columns[2]),
+      rarityClass: columns[3],
+      meatTags: [...new Set(meatTags)],
+      baseMeatValue: parseMoney(columns[5]),
+      bestUse: columns[6],
+      enabled: false
+    });
+  }
+
+  return rows;
 }
 
 export function parseSeasoningCatalog(markdown) {
@@ -409,16 +507,77 @@ function dedupeById(rows) {
   return [...byId.values()];
 }
 
-export function loadCatalogFromDocs(rootDir = process.cwd()) {
+function suffixDuplicateIds(rows) {
+  const counts = new Map();
+  return rows.map((row) => {
+    const nextCount = (counts.get(row.id) ?? 0) + 1;
+    counts.set(row.id, nextCount);
+    return {
+      ...row,
+      id: nextCount === 1 ? row.id : `${row.id}_${nextCount}`
+    };
+  });
+}
+
+export function loadExtraMeatCookingPreview(rootDir = process.cwd(), options = {}) {
+  const files = ['more-meat-list-one.md', 'more-meat-list-two.md'];
+  const random = options.random ?? createSeededRandom(options.cookingTimingSeed ?? DEFAULT_COOKING_TIMING_SEED);
+  const rows = suffixDuplicateIds(
+    files.flatMap((file) => parseAdditionalMeatTimingList(readDoc(rootDir, file), file))
+  );
+
+  return rows.map((row) => {
+    const cookingTimes = generateDefaultCookingTimes(row, random);
+    return {
+      ...row,
+      defaultWeightKg: cookingTimes.defaultWeightKg,
+      defaultCookedSeconds: cookingTimes.defaultCookedSeconds,
+      defaultWellCookedSeconds: cookingTimes.defaultWellCookedSeconds,
+      defaultPerfectlyCookedSeconds: cookingTimes.defaultPerfectlyCookedSeconds,
+      legendaryCookingEligible: cookingTimes.legendaryCookingEligible
+    };
+  });
+}
+
+export function formatExtraMeatCookingPreviewMarkdown(rows, metadata = {}) {
+  const seedLine = metadata.cookingTimingSeed === undefined
+    ? ''
+    : `\nGenerated with cooking timing seed: \`${metadata.cookingTimingSeed}\`\n`;
+  const header = [
+    '# Extra Meat Cooking Time Preview',
+    seedLine,
+    '| Source | ID | Meat | Weight | Rarity | Cooked | Well Cooked | Perfectly Cooked | Legendary Timing |',
+    '|---|---|---|---:|---|---:|---:|---:|---|'
+  ].filter(Boolean);
+  const body = rows.map((row) => [
+    row.sourceFile,
+    row.id,
+    row.displayName,
+    `${row.defaultWeightKg} kg`,
+    row.rarityClass,
+    row.defaultCookedSeconds,
+    row.defaultWellCookedSeconds,
+    row.defaultPerfectlyCookedSeconds,
+    row.legendaryCookingEligible ? 'Yes' : 'No'
+  ].join(' | '));
+
+  return `${header.join('\n')}\n${body.map((line) => `| ${line} |`).join('\n')}\n`;
+}
+
+export function loadCatalogFromDocs(rootDir = process.cwd(), options = {}) {
   const meatMarkdown = readDoc(rootDir, 'base-meat-values.md');
   const equipmentMarkdown = readDoc(rootDir, 'equipment-list.md');
   const seasoningMarkdown = readDoc(rootDir, 'seasoning-list.md');
   const weightMarkdown = readDoc(rootDir, 'Weight-Profiles-Per-Meat.md');
 
   const weightProfiles = parseWeightProfiles(weightMarkdown);
-  const meats = balanceMeatBaseValues(
-    parseMeatCatalogWithProfiles(meatMarkdown, weightMarkdown),
-    weightProfiles
+  const meats = addCookingTimingToMeats(
+    balanceMeatBaseValues(
+      parseMeatCatalogWithProfiles(meatMarkdown, weightMarkdown),
+      weightProfiles
+    ),
+    weightProfiles,
+    options
   );
 
   return {

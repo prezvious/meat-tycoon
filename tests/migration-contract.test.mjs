@@ -62,6 +62,19 @@ test('migration stores time systems as absolute timestamps', () => {
   assert.match(sql, /interval '3 days'/);
 });
 
+test('migration stores cooking time, speed, and long-cook reward snapshots', () => {
+  assert.match(sql, /default_weight_kg numeric\(60, 4\)/);
+  assert.match(sql, /default_cooked_seconds integer not null default 30/);
+  assert.match(sql, /default_well_cooked_seconds integer not null default 60/);
+  assert.match(sql, /default_perfectly_cooked_seconds integer not null default 180/);
+  assert.match(sql, /legendary_cooking_eligible boolean not null default false/);
+  assert.match(sql, /cooking_speed_multiplier numeric\(8, 4\) not null default 1/);
+  assert.match(sql, /long_cook_multiplier_snapshot numeric\(8, 4\) not null default 1/);
+  assert.match(sql, /default_cooking_seconds_snapshot integer not null default 60/);
+  assert.match(sql, /pre_equipment_cooking_seconds_snapshot integer not null default 60/);
+  assert.match(sql, /equipment_speed_multiplier_snapshot numeric\(8, 4\) not null default 1/);
+});
+
 test('migration stores design-aligned catalog and shop formulas', () => {
   assert.match(sql, /body_min_kg numeric/);
   assert.match(sql, /body_max_kg numeric/);
@@ -83,6 +96,23 @@ test('migration enforces the new global weight and sale rules', () => {
   assert.match(sql, /sqrt\(greatest\(meat\.spawned_weight, 1\.00\)\)/);
   assert.match(sql, /raise exception 'Meat must be cooked before selling'/);
   assert.match(sql, /delete from public\.shop_stock_entries\s+where shop_type = 'meat'/);
+});
+
+test('migration applies server-authoritative cooking speed and long-cook rewards', () => {
+  assert.match(sql, /if p_target_cooking_state not in \('cooked', 'well_cooked', 'perfectly_cooked'\) then/);
+  assert.match(sql, /power\(greatest\(meat\.spawned_weight, 1\.00\) \/ greatest\(coalesce\(meat\.default_weight_kg, 1\), 1\), 0\.75\)/);
+  assert.match(sql, /equipment_speed := least\(2, greatest\(1, coalesce\(equipment\.cooking_speed_multiplier, 1\)\)\)/);
+  assert.match(sql, /duration_seconds := least\(43200, greatest\(15, round\(pre_equipment_seconds \/ equipment_speed\)::integer\)\)/);
+  assert.match(sql, /when default_seconds < 21600 then 1/);
+  assert.match(sql, /long_cook_multiplier := greatest\(1, coalesce\(meat\.long_cook_multiplier_snapshot, 1\)\)/);
+  assert.match(sql, /seasoning_multiplier \* long_cook_multiplier \* sale_modifier/);
+});
+
+test('migration finishes existing active cooking jobs as perfect without a long-cook bonus', () => {
+  assert.match(sql, /where cooking_completed = false/);
+  assert.match(sql, /current_cooking_state = 'perfectly_cooked'/);
+  assert.match(sql, /target_cooking_state = 'perfectly_cooked'/);
+  assert.match(sql, /long_cook_multiplier_snapshot = 1/);
 });
 
 test('player-owned tables have row level security enabled', () => {

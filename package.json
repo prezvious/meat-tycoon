@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit",
     "test": "node --test tests/*.test.mjs",
     "catalog:verify": "node scripts/verify-catalog.mjs",
+    "catalog:extra-cooking-preview": "node scripts/generate-extra-cooking-preview.mjs --write",
     "simulate:weights": "node scripts/simulate-weight-system.mjs --samples=100000000",
     "seed:catalog": "node --env-file=.env.local scripts/seed-catalog.mjs",
     "verify": "npm run catalog:verify && npm run test && npm run lint && npm run typecheck && npm run build"

@@ -23,7 +23,7 @@ import {
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import type { GameModel, SignedInModel } from '@/lib/game/model';
-import { calculateSaleValue, formatWeightKg, inferCookingDurationSeconds } from '@/lib/game/formulas.mjs';
+import { calculateCookingDuration, calculateSaleValue, formatWeightKg } from '@/lib/game/formulas.mjs';
 import {
   applySeasoning,
   buyShopLuck,
@@ -159,6 +159,35 @@ function formatCountdown(targetDateStr: string | null | undefined) {
   const year = target.getFullYear();
 
   return `${hours}h ${minutes}m ${seconds}s (${day},${month},${year})`;
+}
+
+function formatDurationSeconds(value: number) {
+  const totalSecs = Math.max(0, Math.round(Number(value) || 0));
+  const hours = Math.floor(totalSecs / 3600);
+  const minutes = Math.floor((totalSecs % 3600) / 60);
+  const seconds = totalSecs % 60;
+
+  if (hours > 0) {
+    return `${hours}h ${minutes}m`;
+  }
+  if (minutes > 0) {
+    return `${minutes}m ${seconds}s`;
+  }
+  return `${seconds}s`;
+}
+
+function estimateCookingForRow(row: Row, targetCookingState: string, equipmentItem: Row | undefined) {
+  const meatItem = relation(row, 'meat_items');
+  return calculateCookingDuration({
+    targetCookingState,
+    spawnedWeight: Number(row.spawned_weight ?? 1),
+    defaultWeightKg: Number(meatItem?.default_weight_kg ?? 1),
+    defaultCookedSeconds: Number(meatItem?.default_cooked_seconds ?? 30),
+    defaultWellCookedSeconds: Number(meatItem?.default_well_cooked_seconds ?? 60),
+    defaultPerfectlyCookedSeconds: Number(meatItem?.default_perfectly_cooked_seconds ?? 180),
+    legendaryCookingEligible: meatItem?.legendary_cooking_eligible === true,
+    cookingSpeedMultiplier: Number(equipmentItem?.cooking_speed_multiplier ?? 1)
+  });
 }
 
 function Shell({ children, right }: { children: React.ReactNode; right?: React.ReactNode }) {
@@ -350,8 +379,8 @@ function AccountForm({
 type DashboardAction =
   | { type: 'BUY_MEAT'; tempId: string; price: number; meatItemId: string; displayName: string }
   | { type: 'BUY_SEASONING'; tempId: string; price: number; seasoningItemId: string; displayName: string; maximumUses: number; baseMultiplier: number }
-  | { type: 'BUY_EQUIPMENT'; price: number; equipmentId: string; displayName: string; equipmentType: string; cookingSlotCount: number; priceMultiplier: number }
-  | { type: 'START_COOKING'; meatInstanceId: string; equipmentId: string; targetCookingState: string; durationSeconds: number; tempJobId: string; meatDisplayName: string; equipmentDisplayName: string }
+  | { type: 'BUY_EQUIPMENT'; price: number; equipmentId: string; displayName: string; equipmentType: string; cookingSlotCount: number; priceMultiplier: number; cookingSpeedMultiplier: number }
+  | { type: 'START_COOKING'; meatInstanceId: string; equipmentId: string; targetCookingState: string; durationSeconds: number; defaultCookingSeconds: number; preEquipmentCookingSeconds: number; equipmentSpeedMultiplier: number; longCookMultiplier: number; tempJobId: string; meatDisplayName: string; equipmentDisplayName: string }
   | { type: 'APPLY_SEASONING'; meatInstanceId: string; seasoningInstanceId: string; seasoningItemId?: string }
   | { type: 'SELL_MEAT'; meatInstanceId: string; estimatedPrice: number }
   | { type: 'SELL_ALL_MEAT'; totalPrice: number }
@@ -361,6 +390,102 @@ type DashboardAction =
   | { type: 'CLAIM_MODIFIER'; modifierId: string }
   | { type: 'MANUAL_REFRESH_SHOP'; shopType: string; cost: number }
   | { type: 'UPGRADE_SHOP'; shopType: string; upgradeType: 'luck' | 'speed'; cost: number };
+
+type RawMeatActionControlsProps = {
+  row: Row;
+  rowId: string;
+  selectedEquipment: string;
+  selectedTarget: string;
+  equipmentOptions: { value: string; label: string }[];
+  targetOptions: { value: string; label: string }[];
+  activeEquipment: Row[];
+  activeActionIds: Set<string>;
+  setEquipmentByMeat: (updater: (current: Record<string, string>) => Record<string, string>) => void;
+  setTargetByMeat: (updater: (current: Record<string, string>) => Record<string, string>) => void;
+  runAction: (
+    actionId: string,
+    optimisticPayload: DashboardAction | null,
+    promise: Promise<{ ok: boolean; message?: string }>,
+    successMessage: string,
+    errorMessagePrefix: string
+  ) => void;
+};
+
+function RawMeatActionControls({
+  row,
+  rowId,
+  selectedEquipment,
+  selectedTarget,
+  equipmentOptions,
+  targetOptions,
+  activeEquipment,
+  activeActionIds,
+  setEquipmentByMeat,
+  setTargetByMeat,
+  runAction
+}: RawMeatActionControlsProps) {
+  const selectedEquipmentItem = activeEquipment.find(e => String(e.id) === selectedEquipment);
+  const cookingEstimate = estimateCookingForRow(row, selectedTarget, selectedEquipmentItem);
+  const isCooking = activeActionIds.has(`cook-meat-${rowId}`);
+
+  return (
+    <Flex className="table-actions table-actions-raw" gap={8} justify="end">
+      <Select
+        size="small"
+        aria-label="Cooking equipment"
+        value={selectedEquipment || undefined}
+        placeholder="Equipment"
+        options={equipmentOptions}
+        onChange={(value) => setEquipmentByMeat((current) => ({ ...current, [rowId]: value }))}
+        style={{ width: 160 }}
+      />
+      <Select
+        size="small"
+        aria-label="Cooking target"
+        value={selectedTarget}
+        options={targetOptions}
+        onChange={(value) => setTargetByMeat((current) => ({ ...current, [rowId]: value }))}
+        style={{ width: 140 }}
+      />
+      <Tag style={{ marginInlineEnd: 0, minWidth: 58, textAlign: 'center' }}>
+        {formatDurationSeconds(cookingEstimate.durationSeconds)}
+      </Tag>
+      <Button
+        size="small"
+        disabled={!selectedEquipment || activeActionIds.size > 0}
+        loading={isCooking}
+        style={{ minWidth: isCooking ? 85 : 60 }}
+        onClick={() => {
+          const eqName = textValue(selectedEquipmentItem?.display_name, 'Equipment');
+          const rawMeatName = relation(row, 'meat_items')?.display_name ?? row.meat_item_id ?? 'Meat';
+          const meatDisplayName = formatMeatName(textValue(rawMeatName, 'Meat'));
+          runAction(
+            `cook-meat-${rowId}`,
+            {
+              type: 'START_COOKING',
+              meatInstanceId: rowId,
+              equipmentId: selectedEquipment,
+              targetCookingState: selectedTarget,
+              durationSeconds: cookingEstimate.durationSeconds,
+              defaultCookingSeconds: cookingEstimate.defaultCookingSeconds,
+              preEquipmentCookingSeconds: cookingEstimate.preEquipmentSeconds,
+              equipmentSpeedMultiplier: cookingEstimate.equipmentSpeedMultiplier,
+              longCookMultiplier: cookingEstimate.longCookMultiplier,
+              tempJobId: `temp-job-${Date.now()}`,
+              meatDisplayName,
+              equipmentDisplayName: eqName
+            },
+            startCooking(rowId, selectedEquipment, selectedTarget),
+            'Cooking started',
+            'Failed to Start Cooking'
+          );
+        }}
+      >
+        {isCooking ? 'Cooking...' : 'Cook'}
+      </Button>
+    </Flex>
+  );
+}
 
 function ReadyDashboard({ model }: { model: SignedInModel }) {
   const router = useRouter();
@@ -542,6 +667,7 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
                     equipment_type: action.equipmentType,
                     purchase_price: action.price,
                     price_multiplier: action.priceMultiplier,
+                    cooking_speed_multiplier: action.cookingSpeedMultiplier,
                     cooking_slot_count: action.cookingSlotCount
                   }
                 }
@@ -570,6 +696,10 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
             cooking_started_at: new Date().toISOString(),
             cooking_target_end_at: new Date(Date.now() + action.durationSeconds * 1000).toISOString(),
             cooking_duration_seconds: action.durationSeconds,
+            default_cooking_seconds_snapshot: action.defaultCookingSeconds,
+            pre_equipment_cooking_seconds_snapshot: action.preEquipmentCookingSeconds,
+            equipment_speed_multiplier_snapshot: action.equipmentSpeedMultiplier,
+            long_cook_multiplier_snapshot: action.longCookMultiplier,
             target_cooking_state: action.targetCookingState,
             cooking_completed: false,
             meat_instances: {
@@ -585,7 +715,11 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
           };
           return {
             ...currentState,
-            ownedMeats: updatedMeats,
+            ownedMeats: updatedMeats.map(m =>
+              String(m.id) === String(action.meatInstanceId)
+                ? { ...m, long_cook_multiplier_snapshot: action.longCookMultiplier }
+                : m
+            ),
             cookingJobs: [...currentState.cookingJobs, newJob]
           };
         }
@@ -1050,6 +1184,12 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
       render: (value) => `${numberValue(value)}x`
     },
     {
+      title: 'Speed',
+      dataIndex: 'cooking_speed_multiplier',
+      align: 'right',
+      render: (value) => `${numberValue(value)}x`
+    },
+    {
       title: 'Price',
       dataIndex: 'purchase_price',
       render: money,
@@ -1066,6 +1206,7 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
         const eqType = textValue(row.equipment_type, 'oven');
         const slotCount = Number(row.cooking_slot_count ?? 1);
         const mult = Number(row.price_multiplier ?? 1);
+        const cookingSpeedMultiplier = Number(row.cooking_speed_multiplier ?? 1);
 
 
         return (
@@ -1078,7 +1219,7 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
               onClick={() =>
                 runAction(
                   `buy-equipment-${itemId}`,
-                  { type: 'BUY_EQUIPMENT', price, equipmentId: itemId, displayName, equipmentType: eqType, cookingSlotCount: slotCount, priceMultiplier: mult },
+                  { type: 'BUY_EQUIPMENT', price, equipmentId: itemId, displayName, equipmentType: eqType, cookingSlotCount: slotCount, priceMultiplier: mult, cookingSpeedMultiplier },
                   buyEquipment(itemId),
                   'Equipment bought',
                   'Failed to Buy Equipment'
@@ -1236,52 +1377,24 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
             label: `${textValue(relation(s as Row, 'seasoning_items')?.display_name, String(s.id))} (${s.remaining_uses}/${s.maximum_uses})`
           }));
 
-          const isCooking = activeActionIds.has(`cook-meat-${rowId}`);
           const isSeasoning = activeActionIds.has(`season-meat-${rowId}`);
           const isSelling = activeActionIds.has(`sell-meat-${rowId}`);
 
           if (tableType === 'raw') {
             return (
-              <Flex className="table-actions table-actions-raw" gap={8} justify="end">
-                <Select
-                  size="small"
-                  aria-label="Cooking equipment"
-                  value={selectedEquipment || undefined}
-                  placeholder="Equipment"
-                  options={equipmentOptions}
-                  onChange={(value) => setEquipmentByMeat((current) => ({ ...current, [rowId]: value }))}
-                  style={{ width: 160 }}
-                />
-                <Select
-                  size="small"
-                  aria-label="Cooking target"
-                  value={selectedTarget}
-                  options={targetOptions}
-                  onChange={(value) => setTargetByMeat((current) => ({ ...current, [rowId]: value }))}
-                  style={{ width: 140 }}
-                />
-                <Button
-                  size="small"
-                  disabled={!selectedEquipment || activeActionIds.size > 0}
-                  loading={isCooking}
-                  style={{ minWidth: isCooking ? 85 : 60 }}
-                  onClick={() => {
-                    const eqName = textValue(activeEquipment.find(e => String(e.id) === selectedEquipment)?.display_name, 'Equipment');
-                    const rawMeatName = relation(row, 'meat_items')?.display_name ?? row.meat_item_id ?? 'Meat';
-                    const meatDisplayName = formatMeatName(textValue(rawMeatName, 'Meat'));
-                    const durSec = inferCookingDurationSeconds(Number(row.spawned_weight ?? 1), selectedTarget);
-                    runAction(
-                      `cook-meat-${rowId}`,
-                      { type: 'START_COOKING', meatInstanceId: rowId, equipmentId: selectedEquipment, targetCookingState: selectedTarget, durationSeconds: durSec, tempJobId: `temp-job-${Date.now()}`, meatDisplayName, equipmentDisplayName: eqName },
-                      startCooking(rowId, selectedEquipment, selectedTarget),
-                      'Cooking started',
-                      'Failed to Start Cooking'
-                    );
-                  }}
-                >
-                  {isCooking ? 'Cooking...' : 'Cook'}
-                </Button>
-              </Flex>
+              <RawMeatActionControls
+                row={row}
+                rowId={rowId}
+                selectedEquipment={selectedEquipment}
+                selectedTarget={selectedTarget}
+                equipmentOptions={equipmentOptions}
+                targetOptions={targetOptions}
+                activeEquipment={activeEquipment}
+                activeActionIds={activeActionIds}
+                setEquipmentByMeat={setEquipmentByMeat}
+                setTargetByMeat={setTargetByMeat}
+                runAction={runAction}
+              />
             );
           }
 
@@ -1340,6 +1453,7 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
                       baseMeatValue: baseMeatVal,
                       purchasePricePaid: purchasePaid,
                       equipmentMultiplier: eqMult,
+                      longCookMultiplier: Number(row.long_cook_multiplier_snapshot ?? 1),
                       seasonings: (row['applied_seasonings'] as { baseMultiplier: number; remainingUses: number; maximumUses: number }[]) ?? []
                     });
                     const estPrice = Number(saleEstimate.finalSellingPrice);
@@ -1590,6 +1704,7 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
                                     baseMeatValue: baseMeatVal,
                                     purchasePricePaid: purchasePaid,
                                     equipmentMultiplier: eqMult,
+                                    longCookMultiplier: Number(row.long_cook_multiplier_snapshot ?? 1),
                                     seasonings: (row['applied_seasonings'] as { baseMultiplier: number; remainingUses: number; maximumUses: number }[]) ?? []
                                   });
                                   totalPrice += Number(saleEstimate.finalSellingPrice);

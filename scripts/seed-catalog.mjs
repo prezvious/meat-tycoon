@@ -3,7 +3,8 @@ import { loadCatalogFromDocs, validateCatalog } from '../src/lib/catalog/catalog
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const catalog = loadCatalogFromDocs(process.cwd());
+const cookingTimingSeed = process.env.COOKING_TIMING_SEED ?? `seed-${Date.now()}`;
+const catalog = loadCatalogFromDocs(process.cwd(), { cookingTimingSeed });
 const issues = validateCatalog(catalog);
 
 if (issues.length) {
@@ -26,7 +27,8 @@ if (!supabaseUrl || !serviceRoleKey) {
           equipment: catalog.equipment.length,
           seasonings: catalog.seasonings.length,
           weightProfiles: catalog.weightProfiles.length
-        }
+        },
+        cookingTimingSeed
       },
       null,
       2
@@ -78,6 +80,11 @@ await upsert(
     purchase_price: meat.purchasePrice,
     base_meat_value: meat.baseMeatValue,
     category_multiplier: meat.categoryMultiplier,
+    default_weight_kg: meat.defaultWeightKg,
+    default_cooked_seconds: meat.defaultCookedSeconds,
+    default_well_cooked_seconds: meat.defaultWellCookedSeconds,
+    default_perfectly_cooked_seconds: meat.defaultPerfectlyCookedSeconds,
+    legendary_cooking_eligible: meat.legendaryCookingEligible,
     access_tier: meat.accessTier,
     shop_stage: meat.shopStage,
     unlock_requirement_id: meat.unlockRequirementId,
@@ -102,6 +109,7 @@ await upsert(
     equipment_type: item.equipmentType,
     purchase_price: item.purchasePrice,
     price_multiplier: item.priceMultiplier,
+    cooking_speed_multiplier: item.cookingSpeedMultiplier,
     cooking_slot_count: item.cookingSlotCount,
     unlock_requirement_id: item.unlockRequirementId,
     equipment_tags: item.equipmentTags,
@@ -134,7 +142,8 @@ console.log(
         equipment: catalog.equipment.length,
         seasonings: catalog.seasonings.length,
         weightProfiles: catalog.weightProfiles.length
-      }
+      },
+      cookingTimingSeed
     },
     null,
     2
