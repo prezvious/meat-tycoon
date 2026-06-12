@@ -154,14 +154,11 @@ function formatCountdown(targetDateStr: string | null | undefined) {
   const minutes = Math.floor((totalSecs % 3600) / 60);
   const seconds = totalSecs % 60;
 
-  let absHours = target.getHours();
-  const ampm = absHours >= 12 ? 'PM' : 'AM';
-  absHours = absHours % 12;
-  absHours = absHours ? absHours : 12;
-  const absMinutes = String(target.getMinutes()).padStart(2, '0');
-  const absTimeStr = `${absHours}:${absMinutes} ${ampm}`;
+  const day = String(target.getDate()).padStart(2, '0');
+  const month = String(target.getMonth() + 1).padStart(2, '0');
+  const year = target.getFullYear();
 
-  return `in ${hours} hours ${minutes} minutes ${seconds} seconds (${absTimeStr})`;
+  return `${hours}h ${minutes}m ${seconds}s (${day},${month},${year})`;
 }
 
 function Shell({ children, right }: { children: React.ReactNode; right?: React.ReactNode }) {
@@ -829,6 +826,7 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
     const state = textValue(item.current_cooking_state);
     return state !== 'raw' && !SALEABLE_COOKED_STATES.has(state);
   });
+  const hasAnySeasonings = optimisticState.ownedSeasonings.some(s => Number(s.remaining_uses ?? 0) > 0);
 
   function shopControls(shopType: 'meat' | 'seasoning') {
     const state = shopStateByType.get(shopType);
@@ -1171,78 +1169,80 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
     }
   ];
 
-  const ownedMeatColumns: ColumnsType<Row> = [
-    {
-      title: 'Meat',
-      render: (_, row) => {
-        if (row['display_name_override']) {
-          return formatMeatName(String(row['display_name_override']));
+  const getMeatColumns = (tableType: 'raw' | 'ready' | 'held'): ColumnsType<Row> => {
+    return [
+      {
+        title: 'Meat',
+        width: 120,
+        render: (_, row) => {
+          if (row['display_name_override']) {
+            return formatMeatName(String(row['display_name_override']));
+          }
+          return formatMeatName(textValue(relation(row, 'meat_items')?.display_name, textValue(row.meat_item_id)));
         }
-        return formatMeatName(textValue(relation(row, 'meat_items')?.display_name, textValue(row.meat_item_id)));
-      }
-    },
-    {
-      title: 'Weight',
-      dataIndex: 'spawned_weight',
-      align: 'right',
-      render: formatWeightKg
-    },
-    {
-      title: 'State',
-      dataIndex: 'current_cooking_state',
-      render: (value) => <Tag>{formatState(value)}</Tag>
-    },
-    {
-      title: 'Spoils',
-      dataIndex: 'spoilage_due_at',
-      render: (value, row) => {
-        if (row.current_cooking_state === 'spoiled') {
-          return 'Spoiled';
+      },
+      {
+        title: 'Weight',
+        dataIndex: 'spawned_weight',
+        align: 'right',
+        width: 80,
+        render: formatWeightKg
+      },
+      {
+        title: 'State',
+        dataIndex: 'current_cooking_state',
+        width: 110,
+        render: (value) => <Tag>{formatState(value)}</Tag>
+      },
+      {
+        title: 'Spoils',
+        dataIndex: 'spoilage_due_at',
+        width: 160,
+        className: 'column-nowrap',
+        render: (value, row) => {
+          if (row.current_cooking_state === 'spoiled') {
+            return 'Spoiled';
+          }
+          return value ? formatCountdown(String(value)) : '-';
         }
-        return value ? formatCountdown(String(value)) : '-';
-      }
-    },
-    {
-      title: 'Roll',
-      dataIndex: 'weight_rarity_result',
-      render: (value) => <Tag color={rarityColor(value)}>{formatState(value)}</Tag>
-    },
-    {
-      title: '',
-      render: (_, row) => {
-        const rowId = String(row.id);
-        const selectedEquipment = equipmentByMeat[rowId] ?? firstEquipmentId;
-        const selectedTarget = targetByMeat[rowId] ?? 'perfectly_cooked';
+      },
+      {
+        title: 'Roll',
+        dataIndex: 'weight_rarity_result',
+        width: 80,
+        render: (value) => <Tag color={rarityColor(value)}>{formatState(value)}</Tag>
+      },
+      {
+        title: '',
+        render: (_, row) => {
+          const rowId = String(row.id);
+          const selectedEquipment = equipmentByMeat[rowId] ?? firstEquipmentId;
+          const selectedTarget = targetByMeat[rowId] ?? 'perfectly_cooked';
 
-        const appliedIds = new Set(
-          ((row.applied_seasonings as { seasoning_instance_id: string }[] | undefined) ?? []).map(
-            (as) => String(as.seasoning_instance_id)
-          )
-        );
-        const availableSeasonings = optimisticState.ownedSeasonings.filter(
-          (s) => !appliedIds.has(String(s.id)) && Number(s.remaining_uses ?? 0) > 0
-        );
-        const selectedSeasoning = availableSeasonings.some((s) => String(s.id) === seasoningByMeat[rowId])
-          ? seasoningByMeat[rowId]
-          : String(availableSeasonings[0]?.id ?? '');
+          const appliedIds = new Set(
+            ((row.applied_seasonings as { seasoning_instance_id: string }[] | undefined) ?? []).map(
+              (as) => String(as.seasoning_instance_id)
+            )
+          );
+          const availableSeasonings = optimisticState.ownedSeasonings.filter(
+            (s) => !appliedIds.has(String(s.id)) && Number(s.remaining_uses ?? 0) > 0
+          );
+          const selectedSeasoning = availableSeasonings.some((s) => String(s.id) === seasoningByMeat[rowId])
+            ? seasoningByMeat[rowId]
+            : String(availableSeasonings[0]?.id ?? '');
 
-        const seasoningOptionsForMeat = availableSeasonings.map((s) => ({
-          value: String(s.id),
-          label: `${textValue(relation(s as Row, 'seasoning_items')?.display_name, String(s.id))} (${s.remaining_uses}/${s.maximum_uses})`
-        }));
+          const seasoningOptionsForMeat = availableSeasonings.map((s) => ({
+            value: String(s.id),
+            label: `${textValue(relation(s as Row, 'seasoning_items')?.display_name, String(s.id))} (${s.remaining_uses}/${s.maximum_uses})`
+          }));
 
-        const state = textValue(row.current_cooking_state);
-        const canCook = state === 'raw';
-        const canSell = SALEABLE_COOKED_STATES.has(state);
+          const isCooking = activeActionIds.has(`cook-meat-${rowId}`);
+          const isSeasoning = activeActionIds.has(`season-meat-${rowId}`);
+          const isSelling = activeActionIds.has(`sell-meat-${rowId}`);
 
-        const isCooking = activeActionIds.has(`cook-meat-${rowId}`);
-        const isSeasoning = activeActionIds.has(`season-meat-${rowId}`);
-        const isSelling = activeActionIds.has(`sell-meat-${rowId}`);
-
-        return (
-          <Flex className="table-actions table-actions-wide" gap={8} justify="end" wrap>
-            {canCook && (
-              <>
+          if (tableType === 'raw') {
+            return (
+              <Flex className="table-actions table-actions-raw" gap={8} justify="end">
                 <Select
                   size="small"
                   aria-label="Cooking equipment"
@@ -1250,7 +1250,7 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
                   placeholder="Equipment"
                   options={equipmentOptions}
                   onChange={(value) => setEquipmentByMeat((current) => ({ ...current, [rowId]: value }))}
-                  style={{ width: 170 }}
+                  style={{ width: 160 }}
                 />
                 <Select
                   size="small"
@@ -1258,7 +1258,7 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
                   value={selectedTarget}
                   options={targetOptions}
                   onChange={(value) => setTargetByMeat((current) => ({ ...current, [rowId]: value }))}
-                  style={{ width: 150 }}
+                  style={{ width: 140 }}
                 />
                 <Button
                   size="small"
@@ -1281,11 +1281,15 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
                 >
                   {isCooking ? 'Cooking...' : 'Cook'}
                 </Button>
-              </>
-            )}
-            {canSell && (
-              <>
-                {availableSeasonings.length > 0 && (
+              </Flex>
+            );
+          }
+
+          if (tableType === 'ready') {
+            const hasSeasonings = availableSeasonings.length > 0;
+            return (
+              <Flex className={`table-actions ${hasSeasonings ? 'table-actions-ready-season' : 'table-actions-ready-sell'}`} gap={8} justify="end">
+                {hasSeasonings && (
                   <>
                     <Select
                       size="small"
@@ -1294,7 +1298,7 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
                       placeholder="Seasoning"
                       options={seasoningOptionsForMeat}
                       onChange={(value) => setSeasoningByMeat((current) => ({ ...current, [rowId]: value }))}
-                      style={{ width: 170 }}
+                      style={{ width: 160 }}
                     />
                     <Button
                       size="small"
@@ -1351,14 +1355,20 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
                 >
                   {isSelling ? 'Selling...' : 'Sell'}
                 </Button>
-              </>
-            )}
-            {!canCook && !canSell && <Tag>Not ready</Tag>}
-          </Flex>
-        );
+              </Flex>
+            );
+          }
+
+          // tableType === 'held'
+          return (
+            <Flex className="table-actions table-actions-held" gap={8} justify="end">
+              <Tag>Not ready</Tag>
+            </Flex>
+          );
+        }
       }
-    }
-  ];
+    ];
+  };
 
   const isSyncing = activeActionIds.has('sync-time');
 
@@ -1463,10 +1473,10 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
                     <Table
                       rowKey="id"
                       size="small"
-                      columns={ownedMeatColumns}
+                      columns={getMeatColumns('raw')}
                       dataSource={rawMeats}
                       pagination={{ pageSize: 6, showSizeChanger: false }}
-                      scroll={{ x: 760 }}
+                      scroll={{ x: 940 }}
                     />
                   </Card>
                   {heldMeats.length > 0 && (
@@ -1474,10 +1484,10 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
                       <Table
                         rowKey="id"
                         size="small"
-                        columns={ownedMeatColumns}
+                        columns={getMeatColumns('held')}
                         dataSource={heldMeats}
                         pagination={{ pageSize: 4, showSizeChanger: false }}
-                        scroll={{ x: 760 }}
+                        scroll={{ x: 630 }}
                       />
                     </Card>
                   )}
@@ -1627,10 +1637,10 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
                     <Table
                       rowKey="id"
                       size="small"
-                      columns={ownedMeatColumns}
+                      columns={getMeatColumns('ready')}
                       dataSource={readyMeats}
                       pagination={{ pageSize: 6, showSizeChanger: false }}
-                      scroll={{ x: 760 }}
+                      scroll={{ x: hasAnySeasonings ? 890 : 630 }}
                     />
                   </Card>
                 </Flex>

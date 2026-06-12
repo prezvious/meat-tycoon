@@ -112,6 +112,30 @@ body {
   min-width: 560px;
 }
 
+.table-actions-raw {
+  align-items: center;
+  min-width: 390px;
+}
+
+.table-actions-ready-season {
+  align-items: center;
+  min-width: 340px;
+}
+
+.table-actions-ready-sell {
+  align-items: center;
+  min-width: 80px;
+}
+
+.table-actions-held {
+  align-items: center;
+  min-width: 80px;
+}
+
+.column-nowrap {
+  white-space: nowrap !important;
+}
+
 .shop-controls,
 .modifier-strip,
 .card-toolbar {
@@ -198,7 +222,11 @@ body {
     width: 100%;
   }
 
-  .table-actions-wide {
+  .table-actions-wide,
+  .table-actions-raw,
+  .table-actions-ready-season,
+  .table-actions-ready-sell,
+  .table-actions-held {
     min-width: unset !important;
   }
 
