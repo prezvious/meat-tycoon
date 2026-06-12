@@ -198,6 +198,10 @@ body {
     width: 100%;
   }
 
+  .table-actions-wide {
+    min-width: unset !important;
+  }
+
   .shop-controls,
   .modifier-strip {
     align-items: flex-start;
