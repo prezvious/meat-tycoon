@@ -484,6 +484,12 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
         }
 
         case 'BUY_EQUIPMENT': {
+          const alreadyOwned = currentState.ownedEquipment.some(
+            (e) => String(e.equipment_item_id) === String(action.equipmentId)
+          );
+          if (alreadyOwned) {
+            return currentState;
+          }
           const newEquipment = {
             user_id: currentState.user.id,
             equipment_item_id: action.equipmentId,
@@ -997,6 +1003,20 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
         const eqType = textValue(row.equipment_type, 'oven');
         const slotCount = Number(row.cooking_slot_count ?? 1);
         const mult = Number(row.price_multiplier ?? 1);
+        const isOwned = optimisticState.ownedEquipment.some(
+          (oe) => String(oe.equipment_item_id) === itemId
+        );
+
+        if (isOwned) {
+          return (
+            <div className="table-actions">
+              <Button size="small" disabled style={{ minWidth: 60 }}>
+                Owned
+              </Button>
+            </div>
+          );
+        }
+
         return (
           <div className="table-actions">
             <Button
