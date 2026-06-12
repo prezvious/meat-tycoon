@@ -60,7 +60,7 @@ export function calculateSeasoningSlotStrength(index) {
   return 0.25;
 }
 
-export function calculateSeasoningMultiplier(seasonings, activeEquipmentMultiplier) {
+export function calculateSeasoningMultiplier(seasonings) {
   if (!seasonings.length) {
     return 1;
   }
@@ -81,7 +81,7 @@ export function calculateSeasoningMultiplier(seasonings, activeEquipmentMultipli
     return product * Math.max(1, 1 + effectiveBonus);
   }, 1);
 
-  return Math.min(stacked, Math.max(1, activeEquipmentMultiplier));
+  return stacked;
 }
 
 export function roundCurrency(value) {
@@ -142,8 +142,7 @@ export function calculateSaleValue(input) {
   );
   const equipmentValue = Math.max(equipmentValueBeforeFloor, saleFloorValue);
   const finalSeasoningMultiplier = calculateSeasoningMultiplier(
-    input.seasonings ?? [],
-    Math.max(1, equipmentMultiplier)
+    input.seasonings ?? []
   );
   const seasonedValue = equipmentValue * finalSeasoningMultiplier;
   const finalPreRoundValue =

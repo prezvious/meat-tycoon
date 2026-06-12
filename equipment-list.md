@@ -141,7 +141,7 @@
 ### Steamers & Pressure Cookers
 
 * Basic Steamer Pot ($80.00). Equipment price in USD. Price multiplier: 0.75x.
-* Bamboo Steamer ($350.00). Equipment price in USD. Price multiplier: 1.10x.
+* Bamboo Steamer ($350.00). Equipment price in USD. Price multiplier: 50.00x.
 * Electric Food Steamer ($4,500.00). Equipment price in USD. Price multiplier: 2.40x.
 * Home Pressure Cooker ($45,000.00). Equipment price in USD. Price multiplier: 7.50x.
 * Multi-Cooker ($180,000.00). Equipment price in USD. Price multiplier: 14.00x.

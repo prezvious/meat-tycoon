@@ -25,8 +25,8 @@ test('sale formula applies weight, cooking, equipment, seasoning cap, and roundi
     ]
   });
 
-  assert.equal(result.finalSeasoningMultiplier, 2, 'seasoning must be capped by equipment');
-  assert.equal(result.finalSellingPrice, '607.20');
+  assert.equal(result.finalSeasoningMultiplier, 14.5, 'seasoning must not be capped by equipment');
+  assert.equal(result.finalSellingPrice, '4402.20');
 });
 
 test('durability strength follows seasoning durability tiers', () => {
@@ -51,15 +51,14 @@ test('seasoning compatibility affects bonus before equipment cap', () => {
       { baseMultiplier: 2, remainingUses: 10, maximumUses: 10, compatibilityStrength: 1 },
       { baseMultiplier: 2, remainingUses: 10, maximumUses: 10, compatibilityStrength: 1 },
       { baseMultiplier: 2, remainingUses: 10, maximumUses: 10, compatibilityStrength: 1.5 }
-    ],
-    100
+    ]
   );
 
   assert.equal(result, 2 * 2 * 2 * 2.125);
 });
 
 test('no seasonings produce neutral multiplier', () => {
-  assert.equal(calculateSeasoningMultiplier([], 5), 1);
+  assert.equal(calculateSeasoningMultiplier([]), 1);
 });
 
 test('cooked sale formula floors non-penalty sales above purchase price', () => {

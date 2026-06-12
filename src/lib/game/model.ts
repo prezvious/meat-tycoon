@@ -115,7 +115,7 @@ export async function loadGameModel(): Promise<GameModel> {
     supabase.from('player_sale_modifiers').select('*').eq('active', true),
     supabase
       .from('meat_instances')
-      .select('*, meat_items(display_name, category)')
+      .select('*, meat_items(display_name, category), applied_seasonings:meat_applied_seasonings(seasoning_instance_id, baseMultiplier:effective_multiplier)')
       .is('sold_at', null)
       .order('created_at', { ascending: false })
       .limit(40),

@@ -280,6 +280,9 @@ function parseProfileParameterTable(markdown) {
 
 function inferEquipmentSlots(name) {
   const lowerName = name.toLowerCase();
+  if (lowerName === 'bamboo steamer' || lowerName.includes('bamboo steamer')) {
+    return 5;
+  }
   if (lowerName.includes('full') || lowerName.includes('industrial') || lowerName.includes('production')) {
     return 30;
   }

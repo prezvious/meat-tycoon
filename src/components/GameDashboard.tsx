@@ -345,6 +345,7 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
   const [, startTransition] = useTransition();
   const [equipmentByMeat, setEquipmentByMeat] = useState<Record<string, string>>({});
   const [targetByMeat, setTargetByMeat] = useState<Record<string, string>>({});
+  const [seasoningByMeat, setSeasoningByMeat] = useState<Record<string, string>>({});
 
   // Unified Client State synchronized with model prop
   const [clientState, setClientState] = useState<SignedInModel>(model);
@@ -557,6 +558,7 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
                 applied_seasonings: [
                   ...applied,
                   {
+                    seasoning_instance_id: String(action.seasoningInstanceId),
                     baseMultiplier: Number(seasoningItem?.base_multiplier ?? 1),
                     remainingUses: 1,
                     maximumUses: 1
@@ -742,7 +744,6 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
     .map((item) => item.equipment_items as Row | undefined)
     .filter((item): item is Row => Boolean(item));
   const firstEquipmentId = String(activeEquipment[0]?.id ?? '');
-  const firstSeasoningId = String(optimisticState.ownedSeasonings[0]?.id ?? '');
   const equipmentOptions = activeEquipment.map((item) => ({
     value: String(item.id),
     label: textValue(item.display_name, String(item.id))
@@ -1139,6 +1140,24 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
         const rowId = String(row.id);
         const selectedEquipment = equipmentByMeat[rowId] ?? firstEquipmentId;
         const selectedTarget = targetByMeat[rowId] ?? 'perfectly_cooked';
+
+        const appliedIds = new Set(
+          ((row.applied_seasonings as { seasoning_instance_id: string }[] | undefined) ?? []).map(
+            (as) => String(as.seasoning_instance_id)
+          )
+        );
+        const availableSeasonings = optimisticState.ownedSeasonings.filter(
+          (s) => !appliedIds.has(String(s.id))
+        );
+        const selectedSeasoning = availableSeasonings.some((s) => String(s.id) === seasoningByMeat[rowId])
+          ? seasoningByMeat[rowId]
+          : String(availableSeasonings[0]?.id ?? '');
+
+        const seasoningOptionsForMeat = availableSeasonings.map((s) => ({
+          value: String(s.id),
+          label: `${textValue(relation(s as Row, 'seasoning_items')?.display_name, String(s.id))} (${s.remaining_uses}/${s.maximum_uses})`
+        }));
+
         const state = textValue(row.current_cooking_state);
         const canCook = state === 'raw';
         const canSell = SALEABLE_COOKED_STATES.has(state);
@@ -1148,7 +1167,7 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
         const isSelling = activeActionIds.has(`sell-meat-${rowId}`);
 
         return (
-          <Flex className={canCook ? 'table-actions table-actions-wide' : 'table-actions'} gap={8} justify="end" wrap>
+          <Flex className="table-actions table-actions-wide" gap={8} justify="end" wrap>
             {canCook && (
               <>
                 <Select
@@ -1192,16 +1211,25 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
             )}
             {canSell && (
               <>
+                <Select
+                  size="small"
+                  aria-label="Seasoning selection"
+                  value={selectedSeasoning || undefined}
+                  placeholder="Seasoning"
+                  options={seasoningOptionsForMeat}
+                  onChange={(value) => setSeasoningByMeat((current) => ({ ...current, [rowId]: value }))}
+                  style={{ width: 170 }}
+                />
                 <Button
                   size="small"
-                  disabled={!firstSeasoningId || activeActionIds.size > 0}
+                  disabled={!selectedSeasoning || activeActionIds.size > 0}
                   loading={isSeasoning}
                   style={{ minWidth: isSeasoning ? 100 : 60 }}
                   onClick={() =>
                     runAction(
                       `season-meat-${rowId}`,
-                      { type: 'APPLY_SEASONING', meatInstanceId: rowId, seasoningInstanceId: firstSeasoningId },
-                      applySeasoning(rowId, firstSeasoningId),
+                      { type: 'APPLY_SEASONING', meatInstanceId: rowId, seasoningInstanceId: selectedSeasoning },
+                      applySeasoning(rowId, selectedSeasoning),
                       'Seasoning applied',
                       'Failed to Apply Seasoning'
                     )
