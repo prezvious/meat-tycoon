@@ -108,6 +108,15 @@ test('migration applies server-authoritative cooking speed and long-cook rewards
   assert.match(sql, /seasoning_multiplier \* long_cook_multiplier \* sale_modifier/);
 });
 
+test('migration allows destroying one equipment copy only when remaining same-equipment slots cover active jobs', () => {
+  assert.match(sql, /create or replace function public\.destroy_equipment\(p_equipment_item_id text\)/);
+  assert.match(sql, /for update of oe/);
+  assert.match(sql, /remaining_slots := greatest\(0, current_qty - 1\) \* coalesce\(slot_count, 1\)/);
+  assert.match(sql, /if active_jobs > remaining_slots then/);
+  assert.match(sql, /set quantity = quantity - 1/);
+  assert.match(sql, /delete from public\.owned_equipment/);
+});
+
 test('migration finishes existing active cooking jobs as perfect without a long-cook bonus', () => {
   assert.match(sql, /where cooking_completed = false/);
   assert.match(sql, /current_cooking_state = 'perfectly_cooked'/);

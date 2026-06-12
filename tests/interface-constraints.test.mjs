@@ -35,3 +35,12 @@ test('interface source does not contain emoji characters', () => {
 
   assert.deepEqual(offenders, []);
 });
+
+test('raw meat cooking uses automatic equipment instead of a manual equipment selector', () => {
+  const dashboard = fs.readFileSync('src/components/GameDashboard.tsx', 'utf8');
+
+  assert.doesNotMatch(dashboard, /equipmentByMeat/);
+  assert.doesNotMatch(dashboard, /aria-label="Cooking equipment"/);
+  assert.match(dashboard, /No free equipment/);
+  assert.match(dashboard, /selectBestEquipmentForRow/);
+});

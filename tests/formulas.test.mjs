@@ -5,6 +5,7 @@ import {
   calculateCookingDuration,
   calculateDurabilityStrength,
   calculateEquipmentCookingSpeedMultiplier,
+  calculateEquipmentCompatibilityMultiplier,
   calculateLongCookMultiplier,
   calculateSaleValue,
   calculateSeasoningMultiplier,
@@ -12,7 +13,8 @@ import {
   createSeededRandom,
   formatWeightKg,
   generateDefaultCookingTimes,
-  inferCookingDurationSeconds
+  inferCookingDurationSeconds,
+  selectBestCookingEquipment
 } from '../src/lib/game/formulas.mjs';
 
 test('sale formula applies weight, cooking, equipment, seasoning cap, and rounding in order', () => {
@@ -237,6 +239,155 @@ test('equipment cooking speed is type-based and capped at two times', () => {
       purchasePrice: 50
     }) < 1.5
   );
+});
+
+test('equipment compatibility multiplier follows tag overlap tiers', () => {
+  assert.equal(
+    calculateEquipmentCompatibilityMultiplier({
+      meatEquipmentTags: ['smoker', 'slow_cook'],
+      equipmentTags: ['oven', 'grill']
+    }),
+    1
+  );
+  assert.equal(
+    calculateEquipmentCompatibilityMultiplier({
+      meatEquipmentTags: ['smoker', 'slow_cook'],
+      equipmentTags: ['smoker', 'grill']
+    }),
+    1.05
+  );
+  assert.equal(
+    calculateEquipmentCompatibilityMultiplier({
+      meatEquipmentTags: ['smoker', 'slow_cook'],
+      equipmentTags: ['smoker', 'slow_cook', 'grill']
+    }),
+    1.15
+  );
+});
+
+test('best cooking equipment prioritizes sale value over speed', () => {
+  const selected = selectBestCookingEquipment({
+    targetCookingState: 'perfectly_cooked',
+    meatEquipmentTags: ['smoker'],
+    durationInput: {
+      spawnedWeight: 1,
+      defaultWeightKg: 1,
+      defaultPerfectlyCookedSeconds: 600,
+      legendaryCookingEligible: true
+    },
+    saleInput: {
+      spawnedWeight: 1,
+      baseMeatValue: 100,
+      purchasePricePaid: 0
+    },
+    equipmentCandidates: [
+      {
+        freeSlots: 1,
+        equipment: {
+          id: 'fast',
+          display_name: 'Fast Oven',
+          price_multiplier: 2,
+          cooking_speed_multiplier: 2,
+          equipment_tags: []
+        }
+      },
+      {
+        freeSlots: 1,
+        equipment: {
+          id: 'valuable',
+          display_name: 'Valuable Smoker',
+          price_multiplier: 5,
+          cooking_speed_multiplier: 1,
+          equipment_tags: ['smoker']
+        }
+      }
+    ]
+  });
+
+  assert.equal(selected.equipment.id, 'valuable');
+  assert.equal(selected.compatibilityMultiplier, 1.05);
+});
+
+test('best cooking equipment excludes full equipment and uses duration tie-breaks', () => {
+  const selected = selectBestCookingEquipment({
+    targetCookingState: 'perfectly_cooked',
+    durationInput: {
+      spawnedWeight: 1,
+      defaultWeightKg: 1,
+      defaultPerfectlyCookedSeconds: 600,
+      legendaryCookingEligible: true
+    },
+    saleInput: {
+      spawnedWeight: 1,
+      baseMeatValue: 100,
+      purchasePricePaid: 0
+    },
+    equipmentCandidates: [
+      {
+        freeSlots: 0,
+        equipment: {
+          id: 'full',
+          display_name: 'Full Premium Oven',
+          price_multiplier: 10,
+          cooking_speed_multiplier: 2
+        }
+      },
+      {
+        freeSlots: 1,
+        equipment: {
+          id: 'slow',
+          display_name: 'Slow Oven',
+          price_multiplier: 2,
+          cooking_speed_multiplier: 1
+        }
+      },
+      {
+        freeSlots: 1,
+        equipment: {
+          id: 'fast',
+          display_name: 'Fast Oven',
+          price_multiplier: 2,
+          cooking_speed_multiplier: 2
+        }
+      }
+    ]
+  });
+
+  assert.equal(selected.equipment.id, 'fast');
+});
+
+test('best cooking equipment recalculates duration when target doneness changes', () => {
+  const input = {
+    equipmentCandidates: [
+      {
+        freeSlots: 1,
+        equipment: {
+          id: 'oven',
+          display_name: 'Oven',
+          price_multiplier: 2,
+          cooking_speed_multiplier: 1.5
+        }
+      }
+    ],
+    durationInput: {
+      spawnedWeight: 1,
+      defaultWeightKg: 1,
+      defaultCookedSeconds: 120,
+      defaultWellCookedSeconds: 240,
+      defaultPerfectlyCookedSeconds: 600,
+      legendaryCookingEligible: true
+    },
+    saleInput: {
+      spawnedWeight: 1,
+      baseMeatValue: 100,
+      purchasePricePaid: 0
+    }
+  };
+
+  const cooked = selectBestCookingEquipment({ ...input, targetCookingState: 'cooked' });
+  const perfectlyCooked = selectBestCookingEquipment({ ...input, targetCookingState: 'perfectly_cooked' });
+
+  assert.ok(perfectlyCooked.cookingEstimate.durationSeconds > cooked.cookingEstimate.durationSeconds);
 });
 
 test('legacy inferred duration wrapper remains bounded', () => {
