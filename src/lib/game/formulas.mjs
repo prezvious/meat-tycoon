@@ -165,6 +165,54 @@ export function calculateEquipmentCookingSpeedMultiplier(input = {}) {
   return Number(clamp(baseSpeed + progressionBonus, 1, 2).toFixed(4));
 }
 
+function normalizeTags(tags = []) {
+  if (!Array.isArray(tags)) {
+    return [];
+  }
+
+  return [...new Set(tags.map((tag) => String(tag).trim().toLowerCase()).filter(Boolean))];
+}
+
+export function calculateEquipmentCompatibilityMultiplier(input = {}) {
+  const meatTags = normalizeTags(
+    input.meatEquipmentTags ??
+      input.meat_equipment_tags ??
+      input.equipmentCompatibilityTags ??
+      input.equipment_compatibility_tags ??
+      input.meatTags ??
+      input.meat_tags
+  );
+  const equipmentTags = new Set(normalizeTags(input.equipmentTags ?? input.equipment_tags));
+
+  let overlapCount = 0;
+  for (const tag of meatTags) {
+    if (equipmentTags.has(tag)) {
+      overlapCount += 1;
+    }
+  }
+
+  if (overlapCount >= 2) {
+    return 1.15;
+  }
+  if (overlapCount === 1) {
+    return 1.05;
+  }
+  return 1;
+}
+
+export function calculateEffectiveEquipmentSaleMultiplier(input = {}) {
+  const rawMultiplier =
+    input.priceMultiplier ??
+    input.price_multiplier ??
+    input.equipmentMultiplier ??
+    input.equipment_multiplier ??
+    1;
+  const numericMultiplier = Number(rawMultiplier ?? 1);
+  const baseMultiplier = Number.isFinite(numericMultiplier) ? Math.max(0, numericMultiplier) : 1;
+  const compatibilityMultiplier = calculateEquipmentCompatibilityMultiplier(input);
+  return Number((baseMultiplier * compatibilityMultiplier).toFixed(4));
+}
+
 function tagTimeFactor(tags = []) {
   return tags.reduce((factor, tag) => {
     const normalized = String(tag).toLowerCase();
@@ -303,6 +351,96 @@ export function calculateCookingDuration(input = {}) {
     equipmentSpeedMultiplier: Number(equipmentSpeedMultiplier.toFixed(4)),
     longCookMultiplier
   };
+}
+
+export function selectBestCookingEquipment(input = {}) {
+  const candidates = input.equipmentCandidates ?? input.equipment ?? [];
+  const targetCookingState = input.targetCookingState ?? input.target_cooking_state ?? input.cookingState ?? 'cooked';
+  const meatEquipmentTags =
+    input.meatEquipmentTags ??
+    input.meat_equipment_tags ??
+    input.equipmentCompatibilityTags ??
+    input.equipment_compatibility_tags ??
+    input.meatTags ??
+    input.meat_tags;
+  const durationInput = input.durationInput ?? {};
+  const saleInput = input.saleInput ?? {};
+  let best = null;
+
+  for (const candidate of candidates) {
+    const equipment = candidate.equipment ?? candidate.equipmentItem ?? candidate.equipment_item ?? candidate;
+    const freeSlots = Number(candidate.freeSlots ?? candidate.free_slots ?? equipment.freeSlots ?? equipment.free_slots ?? 0);
+
+    if (!equipment || freeSlots <= 0) {
+      continue;
+    }
+
+    const cookingEstimate = calculateCookingDuration({
+      ...durationInput,
+      targetCookingState,
+      cookingSpeedMultiplier:
+        candidate.cookingSpeedMultiplier ??
+        candidate.cooking_speed_multiplier ??
+        equipment.cookingSpeedMultiplier ??
+        equipment.cooking_speed_multiplier ??
+        1
+    });
+    const equipmentTags = candidate.equipmentTags ?? candidate.equipment_tags ?? equipment.equipmentTags ?? equipment.equipment_tags;
+    const compatibilityMultiplier = calculateEquipmentCompatibilityMultiplier({
+      meatEquipmentTags,
+      equipmentTags
+    });
+    const equipmentMultiplier = calculateEffectiveEquipmentSaleMultiplier({
+      priceMultiplier: candidate.priceMultiplier ?? candidate.price_multiplier ?? equipment.priceMultiplier ?? equipment.price_multiplier,
+      meatEquipmentTags,
+      equipmentTags
+    });
+    const saleEstimate = calculateSaleValue({
+      ...saleInput,
+      cookingState: targetCookingState,
+      equipmentMultiplier,
+      longCookMultiplier: cookingEstimate.longCookMultiplier
+    });
+    const saleValue = Number(saleEstimate.finalSellingPrice);
+    const rank = {
+      saleValue: Number.isFinite(saleValue) ? saleValue : 0,
+      durationSeconds: cookingEstimate.durationSeconds,
+      speedMultiplier: cookingEstimate.equipmentSpeedMultiplier,
+      freeSlots,
+      name: String(equipment.displayName ?? equipment.display_name ?? equipment.id ?? candidate.id ?? '')
+    };
+
+    if (
+      !best ||
+      rank.saleValue > best.rank.saleValue ||
+      (rank.saleValue === best.rank.saleValue && rank.durationSeconds < best.rank.durationSeconds) ||
+      (rank.saleValue === best.rank.saleValue &&
+        rank.durationSeconds === best.rank.durationSeconds &&
+        rank.speedMultiplier > best.rank.speedMultiplier) ||
+      (rank.saleValue === best.rank.saleValue &&
+        rank.durationSeconds === best.rank.durationSeconds &&
+        rank.speedMultiplier === best.rank.speedMultiplier &&
+        rank.freeSlots > best.rank.freeSlots) ||
+      (rank.saleValue === best.rank.saleValue &&
+        rank.durationSeconds === best.rank.durationSeconds &&
+        rank.speedMultiplier === best.rank.speedMultiplier &&
+        rank.freeSlots === best.rank.freeSlots &&
+        rank.name.localeCompare(best.rank.name) < 0)
+    ) {
+      best = {
+        candidate,
+        equipment,
+        freeSlots,
+        cookingEstimate,
+        saleEstimate,
+        equipmentMultiplier,
+        compatibilityMultiplier,
+        rank
+      };
+    }
+  }
+
+  return best;
 }
 
 export function calculateDurabilityStrength(remainingUses, maximumUses) {

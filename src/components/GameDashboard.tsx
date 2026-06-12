@@ -23,7 +23,12 @@ import {
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import type { GameModel, SignedInModel } from '@/lib/game/model';
-import { calculateCookingDuration, calculateSaleValue, formatWeightKg } from '@/lib/game/formulas.mjs';
+import {
+  calculateEffectiveEquipmentSaleMultiplier,
+  calculateSaleValue,
+  formatWeightKg,
+  selectBestCookingEquipment
+} from '@/lib/game/formulas.mjs';
 import {
   applySeasoning,
   buyShopLuck,
@@ -52,11 +57,37 @@ const { Text, Title } = Typography;
 
 type AuthMode = 'signin' | 'signup';
 type Row = Record<string, unknown>;
+type EquipmentCandidate = {
+  equipment: Row;
+  ownedEquipment: Row;
+  totalSlots: number;
+  occupiedSlots: number;
+  freeSlots: number;
+};
+type CookingEstimate = {
+  defaultCookingSeconds: number;
+  preEquipmentSeconds: number;
+  durationSeconds: number;
+  equipmentSpeedMultiplier: number;
+  longCookMultiplier: number;
+};
+type BestCookingEquipmentSelection = {
+  equipment: Row;
+  freeSlots: number;
+  cookingEstimate: CookingEstimate;
+  saleEstimate: { finalSellingPrice: string };
+  equipmentMultiplier: number;
+  compatibilityMultiplier: number;
+};
 const SALEABLE_COOKED_STATES = new Set(['cooked', 'well_cooked', 'perfectly_cooked']);
 
 function relation(row: Row, key: string): Row | undefined {
   const value = row[key];
   return value && typeof value === 'object' ? (value as Row) : undefined;
+}
+
+function arrayValue(value: unknown) {
+  return Array.isArray(value) ? value.map((item) => String(item)) : [];
 }
 
 function textValue(value: unknown, fallback = '') {
@@ -176,18 +207,47 @@ function formatDurationSeconds(value: number) {
   return `${seconds}s`;
 }
 
-function estimateCookingForRow(row: Row, targetCookingState: string, equipmentItem: Row | undefined) {
-  const meatItem = relation(row, 'meat_items');
-  return calculateCookingDuration({
-    targetCookingState,
+function cookingDurationInputForRow(row: Row, meatItem: Row | undefined) {
+  return {
     spawnedWeight: Number(row.spawned_weight ?? 1),
     defaultWeightKg: Number(meatItem?.default_weight_kg ?? 1),
     defaultCookedSeconds: Number(meatItem?.default_cooked_seconds ?? 30),
     defaultWellCookedSeconds: Number(meatItem?.default_well_cooked_seconds ?? 60),
     defaultPerfectlyCookedSeconds: Number(meatItem?.default_perfectly_cooked_seconds ?? 180),
-    legendaryCookingEligible: meatItem?.legendary_cooking_eligible === true,
-    cookingSpeedMultiplier: Number(equipmentItem?.cooking_speed_multiplier ?? 1)
+    legendaryCookingEligible: meatItem?.legendary_cooking_eligible === true
+  };
+}
+
+function saleInputForRow(row: Row, meatItem: Row | undefined) {
+  return {
+    spawnedWeight: Number(row.spawned_weight ?? 1),
+    baseMeatValue: Number(meatItem?.base_meat_value ?? row.base_meat_value_snapshot ?? 0),
+    categoryMultiplier: Number(meatItem?.category_multiplier ?? 1),
+    purchasePricePaid: Number(row.purchase_price_paid ?? 0)
+  };
+}
+
+function effectiveEquipmentMultiplierForMeat(meatItem: Row | undefined, equipmentItem: Row | undefined) {
+  return calculateEffectiveEquipmentSaleMultiplier({
+    priceMultiplier: equipmentItem?.price_multiplier ?? 1,
+    meatEquipmentTags: arrayValue(meatItem?.equipment_compatibility_tags),
+    equipmentTags: arrayValue(equipmentItem?.equipment_tags)
   });
+}
+
+function selectBestEquipmentForRow(
+  row: Row,
+  targetCookingState: string,
+  equipmentCandidates: EquipmentCandidate[],
+  meatItem: Row | undefined
+): BestCookingEquipmentSelection | null {
+  return selectBestCookingEquipment({
+    equipmentCandidates,
+    targetCookingState,
+    meatEquipmentTags: arrayValue(meatItem?.equipment_compatibility_tags),
+    durationInput: cookingDurationInputForRow(row, meatItem),
+    saleInput: saleInputForRow(row, meatItem)
+  }) as BestCookingEquipmentSelection | null;
 }
 
 function Shell({ children, right }: { children: React.ReactNode; right?: React.ReactNode }) {
@@ -391,54 +451,109 @@ type DashboardAction =
   | { type: 'MANUAL_REFRESH_SHOP'; shopType: string; cost: number }
   | { type: 'UPGRADE_SHOP'; shopType: string; upgradeType: 'luck' | 'speed'; cost: number };
 
+type RunDashboardAction = (
+  actionId: string,
+  optimisticPayload: DashboardAction | null,
+  promise: Promise<{ ok: boolean; message?: string }>,
+  successMessage: string,
+  errorMessagePrefix: string
+) => void;
+type StartCookingActionArgs = {
+  row: Row;
+  rowId: string;
+  selectedTarget: string;
+  bestEquipmentSelection: BestCookingEquipmentSelection | null;
+  runAction: RunDashboardAction;
+};
+
 type RawMeatActionControlsProps = {
   row: Row;
   rowId: string;
-  selectedEquipment: string;
+  bestEquipmentSelection: BestCookingEquipmentSelection | null;
   selectedTarget: string;
-  equipmentOptions: { value: string; label: string }[];
   targetOptions: { value: string; label: string }[];
-  activeEquipment: Row[];
   activeActionIds: Set<string>;
-  setEquipmentByMeat: (updater: (current: Record<string, string>) => Record<string, string>) => void;
   setTargetByMeat: (updater: (current: Record<string, string>) => Record<string, string>) => void;
-  runAction: (
-    actionId: string,
-    optimisticPayload: DashboardAction | null,
-    promise: Promise<{ ok: boolean; message?: string }>,
-    successMessage: string,
-    errorMessagePrefix: string
-  ) => void;
+  runAction: RunDashboardAction;
 };
+
+function equipmentLabelForSelection(bestEquipmentSelection: BestCookingEquipmentSelection | null) {
+  const equipment = bestEquipmentSelection?.equipment;
+  return equipment ? textValue(equipment.display_name, String(equipment.id ?? '')) : 'No free equipment';
+}
+
+function runStartCookingAction({
+  row,
+  rowId,
+  selectedTarget,
+  bestEquipmentSelection,
+  runAction
+}: StartCookingActionArgs) {
+  const selectedEquipmentItem = bestEquipmentSelection?.equipment;
+  const cookingEstimate = bestEquipmentSelection?.cookingEstimate;
+  if (!selectedEquipmentItem || !cookingEstimate) {
+    return;
+  }
+
+  const selectedEquipment = String(selectedEquipmentItem.id ?? '');
+  const eqName = textValue(selectedEquipmentItem.display_name, 'Equipment');
+  const rawMeatName = relation(row, 'meat_items')?.display_name ?? row.meat_item_id ?? 'Meat';
+  const meatDisplayName = formatMeatName(textValue(rawMeatName, 'Meat'));
+
+  runAction(
+    `cook-meat-${rowId}`,
+    {
+      type: 'START_COOKING',
+      meatInstanceId: rowId,
+      equipmentId: selectedEquipment,
+      targetCookingState: selectedTarget,
+      durationSeconds: cookingEstimate.durationSeconds,
+      defaultCookingSeconds: cookingEstimate.defaultCookingSeconds,
+      preEquipmentCookingSeconds: cookingEstimate.preEquipmentSeconds,
+      equipmentSpeedMultiplier: cookingEstimate.equipmentSpeedMultiplier,
+      longCookMultiplier: cookingEstimate.longCookMultiplier,
+      tempJobId: `temp-job-${Date.now()}`,
+      meatDisplayName,
+      equipmentDisplayName: eqName
+    },
+    startCooking(rowId, selectedEquipment, selectedTarget),
+    'Cooking started',
+    'Failed to Start Cooking'
+  );
+}
 
 function RawMeatActionControls({
   row,
   rowId,
-  selectedEquipment,
+  bestEquipmentSelection,
   selectedTarget,
-  equipmentOptions,
   targetOptions,
-  activeEquipment,
   activeActionIds,
-  setEquipmentByMeat,
   setTargetByMeat,
   runAction
 }: RawMeatActionControlsProps) {
-  const selectedEquipmentItem = activeEquipment.find(e => String(e.id) === selectedEquipment);
-  const cookingEstimate = estimateCookingForRow(row, selectedTarget, selectedEquipmentItem);
+  const selectedEquipmentItem = bestEquipmentSelection?.equipment;
+  const cookingEstimate = bestEquipmentSelection?.cookingEstimate;
+  const selectedEquipment = String(selectedEquipmentItem?.id ?? '');
+  const equipmentLabel = equipmentLabelForSelection(bestEquipmentSelection);
   const isCooking = activeActionIds.has(`cook-meat-${rowId}`);
 
   return (
     <Flex className="table-actions table-actions-raw" gap={8} justify="end">
-      <Select
-        size="small"
-        aria-label="Cooking equipment"
-        value={selectedEquipment || undefined}
-        placeholder="Equipment"
-        options={equipmentOptions}
-        onChange={(value) => setEquipmentByMeat((current) => ({ ...current, [rowId]: value }))}
-        style={{ width: 160 }}
-      />
+      <Tag
+        title={equipmentLabel}
+        style={{
+          marginInlineEnd: 0,
+          minWidth: 160,
+          maxWidth: 220,
+          overflow: 'hidden',
+          textAlign: 'center',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap'
+        }}
+      >
+        {equipmentLabel}
+      </Tag>
       <Select
         size="small"
         aria-label="Cooking target"
@@ -448,38 +563,22 @@ function RawMeatActionControls({
         style={{ width: 140 }}
       />
       <Tag style={{ marginInlineEnd: 0, minWidth: 58, textAlign: 'center' }}>
-        {formatDurationSeconds(cookingEstimate.durationSeconds)}
+        {cookingEstimate ? formatDurationSeconds(cookingEstimate.durationSeconds) : '-'}
       </Tag>
       <Button
         size="small"
-        disabled={!selectedEquipment || activeActionIds.size > 0}
+        disabled={!selectedEquipment || !cookingEstimate || activeActionIds.size > 0}
         loading={isCooking}
         style={{ minWidth: isCooking ? 85 : 60 }}
-        onClick={() => {
-          const eqName = textValue(selectedEquipmentItem?.display_name, 'Equipment');
-          const rawMeatName = relation(row, 'meat_items')?.display_name ?? row.meat_item_id ?? 'Meat';
-          const meatDisplayName = formatMeatName(textValue(rawMeatName, 'Meat'));
-          runAction(
-            `cook-meat-${rowId}`,
-            {
-              type: 'START_COOKING',
-              meatInstanceId: rowId,
-              equipmentId: selectedEquipment,
-              targetCookingState: selectedTarget,
-              durationSeconds: cookingEstimate.durationSeconds,
-              defaultCookingSeconds: cookingEstimate.defaultCookingSeconds,
-              preEquipmentCookingSeconds: cookingEstimate.preEquipmentSeconds,
-              equipmentSpeedMultiplier: cookingEstimate.equipmentSpeedMultiplier,
-              longCookMultiplier: cookingEstimate.longCookMultiplier,
-              tempJobId: `temp-job-${Date.now()}`,
-              meatDisplayName,
-              equipmentDisplayName: eqName
-            },
-            startCooking(rowId, selectedEquipment, selectedTarget),
-            'Cooking started',
-            'Failed to Start Cooking'
-          );
-        }}
+        onClick={() =>
+          runStartCookingAction({
+            row,
+            rowId,
+            selectedTarget,
+            bestEquipmentSelection,
+            runAction
+          })
+        }
       >
         {isCooking ? 'Cooking...' : 'Cook'}
       </Button>
@@ -491,7 +590,6 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
   const router = useRouter();
   const { message } = App.useApp();
   const [, startTransition] = useTransition();
-  const [equipmentByMeat, setEquipmentByMeat] = useState<Record<string, string>>({});
   const [targetByMeat, setTargetByMeat] = useState<Record<string, string>>({});
   const [seasoningByMeat, setSeasoningByMeat] = useState<Record<string, string>>({});
 
@@ -924,6 +1022,10 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
     () => new Map(optimisticState.meats.map((item) => [String(item.id), item])),
     [optimisticState.meats]
   );
+  const equipmentById = useMemo(
+    () => new Map(optimisticState.equipment.map((item) => [String(item.id), item])),
+    [optimisticState.equipment]
+  );
   const seasoningById = useMemo(
     () => new Map(optimisticState.seasonings.map((item) => [String(item.id), item])),
     [optimisticState.seasonings]
@@ -936,19 +1038,41 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
     () => new Set(optimisticState.activeSaleModifiers.map((item) => String(item.definition_id))),
     [optimisticState.activeSaleModifiers]
   );
+  const activeEquipmentCandidates = useMemo(() => {
+    const occupiedByEquipment = new Map<string, number>();
+    optimisticState.cookingJobs.forEach((job) => {
+      const equipmentId = String(job.equipment_item_id ?? '');
+      occupiedByEquipment.set(equipmentId, (occupiedByEquipment.get(equipmentId) ?? 0) + 1);
+    });
+
+    return optimisticState.ownedEquipment
+      .map((ownedEquipment): EquipmentCandidate | null => {
+        const equipment = relation(ownedEquipment, 'equipment_items');
+        if (!equipment || ownedEquipment.active === false) {
+          return null;
+        }
+
+        const equipmentId = String(equipment.id ?? ownedEquipment.equipment_item_id ?? '');
+        const quantity = Math.max(0, Number(ownedEquipment.quantity ?? 1) || 0);
+        const slotCount = Math.max(0, Number(equipment.cooking_slot_count ?? 1) || 0);
+        const totalSlots = quantity * slotCount;
+        const occupiedSlots = occupiedByEquipment.get(equipmentId) ?? 0;
+
+        return {
+          equipment,
+          ownedEquipment,
+          totalSlots,
+          occupiedSlots,
+          freeSlots: Math.max(0, totalSlots - occupiedSlots)
+        };
+      })
+      .filter((item): item is EquipmentCandidate => Boolean(item));
+  }, [optimisticState.cookingJobs, optimisticState.ownedEquipment]);
 
   if (!mounted) {
     return null;
   }
 
-  const activeEquipment = optimisticState.ownedEquipment
-    .map((item) => item.equipment_items as Row | undefined)
-    .filter((item): item is Row => Boolean(item));
-  const firstEquipmentId = String(activeEquipment[0]?.id ?? '');
-  const equipmentOptions = activeEquipment.map((item) => ({
-    value: String(item.id),
-    label: textValue(item.display_name, String(item.id))
-  }));
   const targetOptions = [
     { value: 'cooked', label: 'Cooked' },
     { value: 'well_cooked', label: 'Well Cooked' },
@@ -1357,8 +1481,14 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
         title: '',
         render: (_, row) => {
           const rowId = String(row.id);
-          const selectedEquipment = equipmentByMeat[rowId] ?? firstEquipmentId;
           const selectedTarget = targetByMeat[rowId] ?? 'perfectly_cooked';
+          const meatItem = relation(row, 'meat_items') ?? meatById.get(String(row.meat_item_id));
+          const bestEquipmentSelection = selectBestEquipmentForRow(
+            row,
+            selectedTarget,
+            activeEquipmentCandidates,
+            meatItem
+          );
 
           const appliedIds = new Set(
             ((row.applied_seasonings as { seasoning_instance_id: string }[] | undefined) ?? []).map(
@@ -1385,13 +1515,10 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
               <RawMeatActionControls
                 row={row}
                 rowId={rowId}
-                selectedEquipment={selectedEquipment}
+                bestEquipmentSelection={bestEquipmentSelection}
                 selectedTarget={selectedTarget}
-                equipmentOptions={equipmentOptions}
                 targetOptions={targetOptions}
-                activeEquipment={activeEquipment}
                 activeActionIds={activeActionIds}
-                setEquipmentByMeat={setEquipmentByMeat}
                 setTargetByMeat={setTargetByMeat}
                 runAction={runAction}
               />
@@ -1439,19 +1566,21 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
                   disabled={activeActionIds.size > 0}
                   style={{ minWidth: isSelling ? 85 : 60 }}
                   onClick={() => {
-                    const baseMeatVal = Number(relation(row, 'meat_items')?.base_meat_value ?? row.base_meat_value_snapshot ?? 0);
+                    const meatItem = relation(row, 'meat_items') ?? meatById.get(String(row.meat_item_id));
+                    const baseMeatVal = Number(meatItem?.base_meat_value ?? row.base_meat_value_snapshot ?? 0);
                     const spawnedW = Number(row.spawned_weight ?? 0);
                     const purchasePaid = Number(row.purchase_price_paid ?? 0);
                     const cookState = String(row.current_cooking_state ?? 'raw');
                     const eqId = String(row.selected_equipment_item_id ?? '');
-                    const eqItem = optimisticState.equipment.find(e => String(e.id) === eqId);
-                    const eqMult = Number(eqItem?.price_multiplier ?? 1);
+                    const eqItem = equipmentById.get(eqId);
+                    const eqMult = effectiveEquipmentMultiplierForMeat(meatItem, eqItem);
 
                     const saleEstimate = calculateSaleValue({
                       cookingState: cookState,
                       spawnedWeight: spawnedW,
                       baseMeatValue: baseMeatVal,
                       purchasePricePaid: purchasePaid,
+                      categoryMultiplier: Number(meatItem?.category_multiplier ?? 1),
                       equipmentMultiplier: eqMult,
                       longCookMultiplier: Number(row.long_cook_multiplier_snapshot ?? 1),
                       seasonings: (row['applied_seasonings'] as { baseMultiplier: number; remainingUses: number; maximumUses: number }[]) ?? []
@@ -1690,19 +1819,21 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
                               onClick={() => {
                                 let totalPrice = 0;
                                 readyMeats.forEach(row => {
-                                  const baseMeatVal = Number(relation(row, 'meat_items')?.base_meat_value ?? row.base_meat_value_snapshot ?? 0);
+                                  const meatItem = relation(row, 'meat_items') ?? meatById.get(String(row.meat_item_id));
+                                  const baseMeatVal = Number(meatItem?.base_meat_value ?? row.base_meat_value_snapshot ?? 0);
                                   const spawnedW = Number(row.spawned_weight ?? 0);
                                   const purchasePaid = Number(row.purchase_price_paid ?? 0);
                                   const cookState = String(row.current_cooking_state ?? 'raw');
                                   const eqId = String(row.selected_equipment_item_id ?? '');
-                                  const eqItem = optimisticState.equipment.find(e => String(e.id) === eqId);
-                                  const eqMult = Number(eqItem?.price_multiplier ?? 1);
+                                  const eqItem = equipmentById.get(eqId);
+                                  const eqMult = effectiveEquipmentMultiplierForMeat(meatItem, eqItem);
 
                                   const saleEstimate = calculateSaleValue({
                                     cookingState: cookState,
                                     spawnedWeight: spawnedW,
                                     baseMeatValue: baseMeatVal,
                                     purchasePricePaid: purchasePaid,
+                                    categoryMultiplier: Number(meatItem?.category_multiplier ?? 1),
                                     equipmentMultiplier: eqMult,
                                     longCookMultiplier: Number(row.long_cook_multiplier_snapshot ?? 1),
                                     seasonings: (row['applied_seasonings'] as { baseMultiplier: number; remainingUses: number; maximumUses: number }[]) ?? []
