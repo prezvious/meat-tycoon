@@ -484,30 +484,45 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
         }
 
         case 'BUY_EQUIPMENT': {
+          const newOwnedEquipment = currentState.ownedEquipment.map((e) => {
+            if (String(e.equipment_item_id) === String(action.equipmentId)) {
+              return {
+                ...e,
+                quantity: Number(e.quantity ?? 1) + 1
+              };
+            }
+            return e;
+          });
+
           const alreadyOwned = currentState.ownedEquipment.some(
             (e) => String(e.equipment_item_id) === String(action.equipmentId)
           );
-          if (alreadyOwned) {
-            return currentState;
-          }
-          const newEquipment = {
-            user_id: currentState.user.id,
-            equipment_item_id: action.equipmentId,
-            active: true,
-            acquired_at: new Date().toISOString(),
-            equipment_items: {
-              id: action.equipmentId,
-              display_name: action.displayName,
-              equipment_type: action.equipmentType,
-              purchase_price: action.price,
-              price_multiplier: action.priceMultiplier,
-              cooking_slot_count: action.cookingSlotCount
-            }
-          };
+
+          const finalOwned = alreadyOwned
+            ? newOwnedEquipment
+            : [
+                ...currentState.ownedEquipment,
+                {
+                  user_id: currentState.user.id,
+                  equipment_item_id: action.equipmentId,
+                  active: true,
+                  acquired_at: new Date().toISOString(),
+                  quantity: 1,
+                  equipment_items: {
+                    id: action.equipmentId,
+                    display_name: action.displayName,
+                    equipment_type: action.equipmentType,
+                    purchase_price: action.price,
+                    price_multiplier: action.priceMultiplier,
+                    cooking_slot_count: action.cookingSlotCount
+                  }
+                }
+              ];
+
           return {
             ...currentState,
             save: currentState.save ? { ...currentState.save, balance: Number(currentState.save.balance) - action.price } : null,
-            ownedEquipment: [...currentState.ownedEquipment, newEquipment]
+            ownedEquipment: finalOwned
           };
         }
 
@@ -599,9 +614,19 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
         }
 
         case 'DESTROY_EQUIPMENT': {
+          const finalOwned = currentState.ownedEquipment.map((e) => {
+            if (String(e.equipment_item_id) === String(action.equipmentId)) {
+              return {
+                ...e,
+                quantity: Math.max(0, Number(e.quantity ?? 1) - 1)
+              };
+            }
+            return e;
+          }).filter((e) => Number(e.quantity ?? 1) > 0);
+
           return {
             ...currentState,
-            ownedEquipment: currentState.ownedEquipment.filter(e => String(e.equipment_item_id) !== String(action.equipmentId))
+            ownedEquipment: finalOwned
           };
         }
 
@@ -1003,19 +1028,7 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
         const eqType = textValue(row.equipment_type, 'oven');
         const slotCount = Number(row.cooking_slot_count ?? 1);
         const mult = Number(row.price_multiplier ?? 1);
-        const isOwned = optimisticState.ownedEquipment.some(
-          (oe) => String(oe.equipment_item_id) === itemId
-        );
 
-        if (isOwned) {
-          return (
-            <div className="table-actions">
-              <Button size="small" disabled style={{ minWidth: 60 }}>
-                Owned
-              </Button>
-            </div>
-          );
-        }
 
         return (
           <div className="table-actions">
@@ -1618,8 +1631,13 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
                           textValue(relation(row, 'equipment_items')?.display_name, textValue(row.equipment_item_id))
                       },
                       {
+                        title: 'Qty',
+                        render: (_, row) => Number(row.quantity ?? 1),
+                        align: 'right'
+                      },
+                      {
                         title: 'Slots',
-                        render: (_, row) => Number(relation(row, 'equipment_items')?.cooking_slot_count ?? 1),
+                        render: (_, row) => Number(relation(row, 'equipment_items')?.cooking_slot_count ?? 1) * Number(row.quantity ?? 1),
                         align: 'right'
                       },
                       {
