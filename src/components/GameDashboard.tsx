@@ -1429,7 +1429,7 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
                       size="small"
                       columns={ownedMeatColumns}
                       dataSource={rawMeats}
-                      pagination={{ pageSize: 6 }}
+                      pagination={{ pageSize: 6, showSizeChanger: false }}
                       scroll={{ x: 760 }}
                     />
                   </Card>
@@ -1440,7 +1440,7 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
                         size="small"
                         columns={ownedMeatColumns}
                         dataSource={heldMeats}
-                        pagination={{ pageSize: 4 }}
+                        pagination={{ pageSize: 4, showSizeChanger: false }}
                         scroll={{ x: 760 }}
                       />
                     </Card>
@@ -1556,7 +1556,7 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
                       size="small"
                       columns={ownedMeatColumns}
                       dataSource={readyMeats}
-                      pagination={{ pageSize: 6 }}
+                      pagination={{ pageSize: 6, showSizeChanger: false }}
                       scroll={{ x: 760 }}
                     />
                   </Card>
@@ -1579,7 +1579,7 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
                       ...optimisticState.meats.filter((item) => item.starter_only),
                       ...optimisticState.meatStock
                     ]}
-                    pagination={{ pageSize: 12 }}
+                    pagination={{ pageSize: 12, showSizeChanger: false }}
                     scroll={{ x: 760 }}
                   />
                 </Card>
@@ -1598,7 +1598,7 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
                     size="small"
                     columns={seasoningColumns}
                     dataSource={optimisticState.seasoningStock}
-                    pagination={{ pageSize: 10 }}
+                    pagination={{ pageSize: 10, showSizeChanger: false }}
                     scroll={{ x: 760 }}
                   />
                 </Card>
@@ -1615,7 +1615,7 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
                   size="small"
                   columns={equipmentColumns}
                   dataSource={optimisticState.equipment}
-                  pagination={{ pageSize: 12 }}
+                  pagination={{ pageSize: 12, showSizeChanger: false }}
                   scroll={{ x: 860 }}
                 />
               </Card>
@@ -1692,7 +1692,7 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
                     rowKey="id"
                     size="small"
                     dataSource={optimisticState.ownedSeasonings}
-                    pagination={{ pageSize: 8 }}
+                    pagination={{ pageSize: 8, showSizeChanger: false }}
                     scroll={{ x: 600 }}
                     columns={[
                       {
