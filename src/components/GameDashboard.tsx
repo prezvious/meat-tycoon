@@ -1384,6 +1384,7 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
                         size="small"
                         dataSource={optimisticState.cookingJobs}
                         pagination={false}
+                        scroll={{ x: 650 }}
                         columns={[
                           {
                             title: 'Meat',
@@ -1561,6 +1562,7 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
                     size="small"
                     dataSource={optimisticState.ownedEquipment}
                     pagination={false}
+                    scroll={{ x: 600 }}
                     columns={[
                       {
                         title: 'Equipment',
@@ -1616,6 +1618,7 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
                     size="small"
                     dataSource={optimisticState.ownedSeasonings}
                     pagination={{ pageSize: 8 }}
+                    scroll={{ x: 600 }}
                     columns={[
                       {
                         title: 'Seasoning',

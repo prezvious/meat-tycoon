@@ -177,9 +177,10 @@ body {
 
 @media (max-width: 960px) {
   .app-header {
-    position: static;
-    align-items: flex-start;
-    flex-direction: column;
+    position: static !important;
+    align-items: flex-start !important;
+    flex-direction: column !important;
+    height: auto !important;
   }
 
   .stat-grid,
@@ -189,7 +190,8 @@ body {
   }
 
   .kitchen-workspace {
-    flex-direction: column;
+    flex-direction: column !important;
+    align-items: stretch !important;
   }
 
   .meat-flow {
