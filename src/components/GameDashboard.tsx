@@ -347,6 +347,11 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
   const [targetByMeat, setTargetByMeat] = useState<Record<string, string>>({});
   const [seasoningByMeat, setSeasoningByMeat] = useState<Record<string, string>>({});
 
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
   // Unified Client State synchronized with model prop
   const [clientState, setClientState] = useState<SignedInModel>(model);
   const [isAutoSyncing, setIsAutoSyncing] = useState(false);
@@ -770,6 +775,10 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
     () => new Set(optimisticState.activeSaleModifiers.map((item) => String(item.definition_id))),
     [optimisticState.activeSaleModifiers]
   );
+
+  if (!mounted) {
+    return null;
+  }
 
   const activeEquipment = optimisticState.ownedEquipment
     .map((item) => item.equipment_items as Row | undefined)
