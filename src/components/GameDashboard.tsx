@@ -35,6 +35,7 @@ import {
   destroyEquipment,
   manualRefreshShop,
   resolveTimeProgress,
+  seasonAllMeat,
   sellAllMeat,
   sellMeat,
   sellSeasoning,
@@ -86,6 +87,30 @@ function formatState(value: unknown) {
   return String(value ?? 'raw')
     .split('_')
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+function formatMeatName(name: string): string {
+  if (!name) return '';
+  return name
+    .replace(/[_-]+/g, ' ')
+    .split(' ')
+    .filter(Boolean)
+    .map((w) => {
+      let prefix = '';
+      let suffix = '';
+      let word = w;
+      if (word.startsWith('(')) {
+        prefix = '(';
+        word = word.slice(1);
+      }
+      if (word.endsWith(')')) {
+        suffix = ')';
+        word = word.slice(0, -1);
+      }
+      if (!word) return w;
+      return prefix + word.charAt(0).toUpperCase() + word.slice(1).toLowerCase() + suffix;
+    })
     .join(' ');
 }
 
@@ -333,6 +358,7 @@ type DashboardAction =
   | { type: 'APPLY_SEASONING'; meatInstanceId: string; seasoningInstanceId: string; seasoningItemId?: string }
   | { type: 'SELL_MEAT'; meatInstanceId: string; estimatedPrice: number }
   | { type: 'SELL_ALL_MEAT'; totalPrice: number }
+  | { type: 'SEASON_ALL_MEAT' }
   | { type: 'DESTROY_EQUIPMENT'; equipmentId: string }
   | { type: 'SELL_SEASONING'; seasoningInstanceId: string; estimatedRefund: number }
   | { type: 'CLAIM_MODIFIER'; modifierId: string }
@@ -616,6 +642,10 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
             save: currentState.save ? { ...currentState.save, balance: Number(currentState.save.balance) + action.totalPrice } : null,
             ownedMeats: currentState.ownedMeats.filter(m => !isSaleableCookedState(m.current_cooking_state))
           };
+        }
+
+        case 'SEASON_ALL_MEAT': {
+          return currentState;
         }
 
         case 'DESTROY_EQUIPMENT': {
@@ -951,7 +981,7 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
       title: 'Meat',
       dataIndex: 'display_name',
       render: (_, row) =>
-        textValue(row.display_name ?? meatById.get(String(row.item_id))?.display_name, textValue(row.item_id))
+        formatMeatName(textValue(row.display_name ?? meatById.get(String(row.item_id))?.display_name, textValue(row.item_id)))
     },
     {
       title: 'Price',
@@ -979,7 +1009,8 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
         const itemId = String(row.item_id ?? row.id);
         const isBuying = activeActionIds.has(`buy-meat-${itemId}`);
         const price = Number(row.purchase_price ?? 0);
-        const displayName = textValue(row.display_name, 'Meat');
+        const rawName = row.display_name ?? meatById.get(itemId)?.display_name ?? itemId;
+        const displayName = formatMeatName(textValue(rawName, 'Meat'));
         return (
           <div className="table-actions">
             {hasStock ? (
@@ -1145,9 +1176,9 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
       title: 'Meat',
       render: (_, row) => {
         if (row['display_name_override']) {
-          return String(row['display_name_override']);
+          return formatMeatName(String(row['display_name_override']));
         }
-        return textValue(relation(row, 'meat_items')?.display_name, textValue(row.meat_item_id));
+        return formatMeatName(textValue(relation(row, 'meat_items')?.display_name, textValue(row.meat_item_id)));
       }
     },
     {
@@ -1189,7 +1220,7 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
           )
         );
         const availableSeasonings = optimisticState.ownedSeasonings.filter(
-          (s) => !appliedIds.has(String(s.id))
+          (s) => !appliedIds.has(String(s.id)) && Number(s.remaining_uses ?? 0) > 0
         );
         const selectedSeasoning = availableSeasonings.some((s) => String(s.id) === seasoningByMeat[rowId])
           ? seasoningByMeat[rowId]
@@ -1236,7 +1267,8 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
                   style={{ minWidth: isCooking ? 85 : 60 }}
                   onClick={() => {
                     const eqName = textValue(activeEquipment.find(e => String(e.id) === selectedEquipment)?.display_name, 'Equipment');
-                    const meatDisplayName = textValue(relation(row, 'meat_items')?.display_name, 'Meat');
+                    const rawMeatName = relation(row, 'meat_items')?.display_name ?? row.meat_item_id ?? 'Meat';
+                    const meatDisplayName = formatMeatName(textValue(rawMeatName, 'Meat'));
                     const durSec = inferCookingDurationSeconds(Number(row.spawned_weight ?? 1), selectedTarget);
                     runAction(
                       `cook-meat-${rowId}`,
@@ -1253,32 +1285,36 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
             )}
             {canSell && (
               <>
-                <Select
-                  size="small"
-                  aria-label="Seasoning selection"
-                  value={selectedSeasoning || undefined}
-                  placeholder="Seasoning"
-                  options={seasoningOptionsForMeat}
-                  onChange={(value) => setSeasoningByMeat((current) => ({ ...current, [rowId]: value }))}
-                  style={{ width: 170 }}
-                />
-                <Button
-                  size="small"
-                  disabled={!selectedSeasoning || activeActionIds.size > 0}
-                  loading={isSeasoning}
-                  style={{ minWidth: isSeasoning ? 100 : 60 }}
-                  onClick={() =>
-                    runAction(
-                      `season-meat-${rowId}`,
-                      { type: 'APPLY_SEASONING', meatInstanceId: rowId, seasoningInstanceId: selectedSeasoning },
-                      applySeasoning(rowId, selectedSeasoning),
-                      'Seasoning applied',
-                      'Failed to Apply Seasoning'
-                    )
-                  }
-                >
-                  {isSeasoning ? 'Seasoning...' : 'Season'}
-                </Button>
+                {availableSeasonings.length > 0 && (
+                  <>
+                    <Select
+                      size="small"
+                      aria-label="Seasoning selection"
+                      value={selectedSeasoning || undefined}
+                      placeholder="Seasoning"
+                      options={seasoningOptionsForMeat}
+                      onChange={(value) => setSeasoningByMeat((current) => ({ ...current, [rowId]: value }))}
+                      style={{ width: 170 }}
+                    />
+                    <Button
+                      size="small"
+                      disabled={!selectedSeasoning || activeActionIds.size > 0}
+                      loading={isSeasoning}
+                      style={{ minWidth: isSeasoning ? 100 : 60 }}
+                      onClick={() =>
+                        runAction(
+                          `season-meat-${rowId}`,
+                          { type: 'APPLY_SEASONING', meatInstanceId: rowId, seasoningInstanceId: selectedSeasoning },
+                          applySeasoning(rowId, selectedSeasoning),
+                          'Seasoning applied',
+                          'Failed to Apply Seasoning'
+                        )
+                      }
+                    >
+                      {isSeasoning ? 'Seasoning...' : 'Season'}
+                    </Button>
+                  </>
+                )}
                 <Button
                   size="small"
                   type="primary"
@@ -1458,11 +1494,22 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
                         columns={[
                           {
                             title: 'Meat',
-                            render: (_, row) =>
-                              textValue(
-                                relation(relation(row, 'meat_instances') ?? {}, 'meat_items')?.display_name,
-                                textValue(row.meat_instance_id)
-                              )
+                            render: (_, row) => {
+                              const displayName = relation(relation(row, 'meat_instances') ?? {}, 'meat_items')?.display_name;
+                              if (displayName) {
+                                return formatMeatName(String(displayName));
+                              }
+                              const instance = optimisticState.ownedMeats.find(m => String(m.id) === String(row.meat_instance_id));
+                              if (instance) {
+                                const mId = String(instance.meat_item_id);
+                                const catMeat = meatById.get(mId);
+                                if (catMeat?.display_name) {
+                                  return formatMeatName(String(catMeat.display_name));
+                                }
+                                return formatMeatName(mId);
+                              }
+                              return 'Meat';
+                            }
                           },
                           {
                             title: 'Target',
@@ -1506,47 +1553,73 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
                     extra={
                       (() => {
                         const isSellingAll = activeActionIds.has('sell-all-meat');
+                        const isSeasoningAll = activeActionIds.has('season-all-meat');
                         return (
-                          <Button
-                            size="small"
-                            type="primary"
-                            loading={isSellingAll}
-                            disabled={readyMeats.length === 0 || activeActionIds.size > 0}
-                            style={{ minWidth: isSellingAll ? 85 : 60 }}
-                            icon={<Icon icon="lucide:badge-dollar-sign" width="15" height="15" />}
-                            onClick={() => {
-                              let totalPrice = 0;
-                              readyMeats.forEach(row => {
-                                const baseMeatVal = Number(relation(row, 'meat_items')?.base_meat_value ?? row.base_meat_value_snapshot ?? 0);
-                                const spawnedW = Number(row.spawned_weight ?? 0);
-                                const purchasePaid = Number(row.purchase_price_paid ?? 0);
-                                const cookState = String(row.current_cooking_state ?? 'raw');
-                                const eqId = String(row.selected_equipment_item_id ?? '');
-                                const eqItem = optimisticState.equipment.find(e => String(e.id) === eqId);
-                                const eqMult = Number(eqItem?.price_multiplier ?? 1);
+                          <Space>
+                            <Button
+                              size="small"
+                              type="primary"
+                              loading={isSellingAll}
+                              disabled={readyMeats.length === 0 || activeActionIds.size > 0}
+                              style={{ minWidth: isSellingAll ? 85 : 60 }}
+                              icon={<Icon icon="lucide:badge-dollar-sign" width="15" height="15" />}
+                              onClick={() => {
+                                let totalPrice = 0;
+                                readyMeats.forEach(row => {
+                                  const baseMeatVal = Number(relation(row, 'meat_items')?.base_meat_value ?? row.base_meat_value_snapshot ?? 0);
+                                  const spawnedW = Number(row.spawned_weight ?? 0);
+                                  const purchasePaid = Number(row.purchase_price_paid ?? 0);
+                                  const cookState = String(row.current_cooking_state ?? 'raw');
+                                  const eqId = String(row.selected_equipment_item_id ?? '');
+                                  const eqItem = optimisticState.equipment.find(e => String(e.id) === eqId);
+                                  const eqMult = Number(eqItem?.price_multiplier ?? 1);
 
-                                const saleEstimate = calculateSaleValue({
-                                  cookingState: cookState,
-                                  spawnedWeight: spawnedW,
-                                  baseMeatValue: baseMeatVal,
-                                  purchasePricePaid: purchasePaid,
-                                  equipmentMultiplier: eqMult,
-                                  seasonings: (row['applied_seasonings'] as { baseMultiplier: number; remainingUses: number; maximumUses: number }[]) ?? []
+                                  const saleEstimate = calculateSaleValue({
+                                    cookingState: cookState,
+                                    spawnedWeight: spawnedW,
+                                    baseMeatValue: baseMeatVal,
+                                    purchasePricePaid: purchasePaid,
+                                    equipmentMultiplier: eqMult,
+                                    seasonings: (row['applied_seasonings'] as { baseMultiplier: number; remainingUses: number; maximumUses: number }[]) ?? []
+                                  });
+                                  totalPrice += Number(saleEstimate.finalSellingPrice);
                                 });
-                                totalPrice += Number(saleEstimate.finalSellingPrice);
-                              });
 
-                              runAction(
-                                'sell-all-meat',
-                                { type: 'SELL_ALL_MEAT', totalPrice },
-                                sellAllMeat(),
-                                'Cooked meat sold',
-                                'Failed to Sell All Meat'
-                              );
-                            }}
-                          >
-                            {isSellingAll ? 'Selling...' : 'Sell all'}
-                          </Button>
+                                runAction(
+                                  'sell-all-meat',
+                                  { type: 'SELL_ALL_MEAT', totalPrice },
+                                  sellAllMeat(),
+                                  'Cooked meat sold',
+                                  'Failed to Sell All Meat'
+                                );
+                              }}
+                            >
+                              {isSellingAll ? 'Selling...' : 'Sell all'}
+                            </Button>
+                            <Button
+                              size="small"
+                              style={{
+                                minWidth: isSeasoningAll ? 100 : 75,
+                                backgroundColor: '#9a6518',
+                                borderColor: '#9a6518',
+                                color: '#fff'
+                              }}
+                              loading={isSeasoningAll}
+                              disabled={readyMeats.length === 0 || optimisticState.ownedSeasonings.length === 0 || activeActionIds.size > 0}
+                              icon={<Icon icon="lucide:sparkles" width="15" height="15" />}
+                              onClick={() => {
+                                runAction(
+                                  'season-all-meat',
+                                  { type: 'SEASON_ALL_MEAT' },
+                                  seasonAllMeat(),
+                                  'All cooked meats seasoned',
+                                  'Failed to Season All Meat'
+                                );
+                              }}
+                            >
+                              {isSeasoningAll ? 'Seasoning...' : 'Season all'}
+                            </Button>
+                          </Space>
                         );
                       })()
                     }

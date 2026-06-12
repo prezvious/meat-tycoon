@@ -210,6 +210,10 @@ export async function sellAllMeat() {
   return runRpc('sell_all_meat');
 }
 
+export async function seasonAllMeat() {
+  return runRpc('season_all_cooked_meat');
+}
+
 export async function manualRefreshShop(shopType: string) {
   return runRpc('manual_refresh_shop', { p_shop_type: shopType });
 }

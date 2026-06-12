@@ -95,19 +95,19 @@ export async function loadGameModel(): Promise<GameModel> {
       .eq('enabled', true)
       .order('shop_stage', { ascending: true })
       .order('purchase_price', { ascending: true })
-      .limit(60),
+      .limit(300),
     supabase
       .from('equipment_items')
       .select('*')
       .eq('enabled', true)
       .order('purchase_price', { ascending: true })
-      .limit(60),
+      .limit(300),
     supabase
       .from('seasoning_items')
       .select('*')
       .eq('enabled', true)
       .order('purchase_price', { ascending: true })
-      .limit(60),
+      .limit(300),
     supabase.from('shop_stock_entries').select('*').eq('shop_type', 'meat'),
     supabase.from('shop_stock_entries').select('*').eq('shop_type', 'seasoning'),
     supabase.from('shop_states').select('*').order('shop_type', { ascending: true }),
