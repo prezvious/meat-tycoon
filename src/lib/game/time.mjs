@@ -67,3 +67,9 @@ export function shouldRefreshShop(shopState, nowIso = new Date().toISOString()) 
 export function seasoningExpiresAt() {
   return null;
 }
+
+export function isSaleModifierActive(modifier, nowMs = Date.now()) {
+  if (!modifier.active) return false;
+  if (modifier.expires_at === null) return true;
+  return Date.parse(modifier.expires_at) > nowMs;
+}

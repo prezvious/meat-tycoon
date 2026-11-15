@@ -74,7 +74,7 @@
 
 ### Fryers
 
-* Small Frying Pan ($15.00). Equipment price in USD. Price multiplier: 0.25x.
+* Small Deep Frying Pan ($15.00). Equipment price in USD. Price multiplier: 0.25x.
 * Basic Deep Pan ($45.00). Equipment price in USD. Price multiplier: 0.60x.
 * Home Deep Fryer ($1,400.00). Equipment price in USD. Price multiplier: 1.75x.
 * Electric Countertop Fryer ($9,000.00). Equipment price in USD. Price multiplier: 3.80x.

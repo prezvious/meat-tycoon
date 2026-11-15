@@ -64,3 +64,13 @@ test('shop refreshes use real due timestamps', () => {
 test('seasonings do not expire', () => {
   assert.equal(seasoningExpiresAt(), null);
 });
+
+test('sale modifiers expire at the boundary and inactive modifiers never apply', async () => {
+  const { isSaleModifierActive } = await import('../src/lib/game/time.mjs');
+  const expiry = Date.parse('2026-11-15T12:00:00.000Z');
+  const modifier = { active: true, expires_at: '2026-11-15T12:00:00.000Z' };
+  assert.equal(isSaleModifierActive(modifier, expiry - 1), true);
+  assert.equal(isSaleModifierActive(modifier, expiry), false);
+  assert.equal(isSaleModifierActive({ active: true, expires_at: null }, expiry), true);
+  assert.equal(isSaleModifierActive({ active: false, expires_at: null }, expiry), false);
+});

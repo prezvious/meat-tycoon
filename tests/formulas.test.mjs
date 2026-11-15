@@ -17,7 +17,7 @@ import {
   selectBestCookingEquipment
 } from '../src/lib/game/formulas.mjs';
 
-test('sale formula applies weight, cooking, equipment, seasoning cap, and rounding in order', () => {
+test('sale formula multiplies uncapped seasonings after cooking and equipment', () => {
   const result = calculateSaleValue({
     spawnedWeight: 10,
     baseMeatValue: 5,
@@ -73,7 +73,7 @@ test('seasoning slot strength follows documented stepped diminishing returns', (
   assert.equal(calculateSeasoningSlotStrength(5), 0.25);
 });
 
-test('seasoning compatibility affects bonus before equipment cap', () => {
+test('seasoning compatibility adjusts each bonus before stacking', () => {
   const result = calculateSeasoningMultiplier(
     [
       { baseMultiplier: 2, remainingUses: 10, maximumUses: 10, compatibilityStrength: 1 },

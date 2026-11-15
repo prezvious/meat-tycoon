@@ -163,13 +163,13 @@ Premium seasonings become expensive because they are limited-use multiplier tool
 
 Luxury and industrial seasonings are extremely expensive because they interact with enormous equipment multipliers and high-value cooked meat.
 
-No seasoning multiplier is designed to replace equipment.
+Equipment still supplies cooking capacity and its own sale multiplier.
 
-The final seasoning multiplier is still capped by the active equipment multiplier.
+The final seasoning multiplier is the product of applied effective bonuses, with no equipment-based cap. Slot strength and durability reduce each bonus when it is applied.
 
-If the active equipment multiplier is low, high-tier seasonings cannot fully express their power.
+Equipment and seasonings multiply the cooked value independently.
 
-If the active equipment multiplier is extremely high, high-tier seasonings can become absurd but still remain below equipment power.
+High-tier combinations can produce very large rewards. Player currency uses arbitrary-precision database decimals and decimal-text transport; the native database numeric limits still apply. An unsupported seasoning reward is rejected atomically before its uses can be consumed.
 
 Seasonings are not permanent free power.
 

@@ -1,8 +1,7 @@
 'use client';
 
-import { useEffect, useMemo, useState, useTransition, useOptimistic } from 'react';
+import { useEffect, useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { Icon } from '@iconify-icon/react';
 import {
   Alert,
   App,
@@ -11,7 +10,6 @@ import {
   Flex,
   Form,
   Input,
-  Layout,
   Progress,
   Select,
   Space,
@@ -21,11 +19,14 @@ import {
   Tag,
   Typography
 } from 'antd';
+import { isSaleModifierActive } from '@/lib/game/time.mjs';
+import { AccountAccess } from './AccountAccess';
+import { formatCurrency } from '@/lib/game/currency.mjs';
+import { interfaceDimensions } from '@/lib/design-system';
+import { InterfaceIcon, PanelTitle, Shell } from './AppShell';
 import type { ColumnsType } from 'antd/es/table';
 import type { GameModel, SignedInModel } from '@/lib/game/model';
 import {
-  calculateEffectiveEquipmentSaleMultiplier,
-  calculateSaleValue,
   formatWeightKg,
   selectBestCookingEquipment
 } from '@/lib/game/formulas.mjs';
@@ -52,7 +53,6 @@ import {
   startGuestSession
 } from '@/app/actions';
 
-const { Header, Content } = Layout;
 const { Text, Title } = Typography;
 
 type AuthMode = 'signin' | 'signup';
@@ -96,14 +96,7 @@ function textValue(value: unknown, fallback = '') {
 }
 
 function money(value: unknown) {
-  const amount = Number(value ?? 0);
-  if (!Number.isFinite(amount)) return '$0.00';
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    notation: Math.abs(amount) >= 1000000 ? 'compact' : 'standard',
-    maximumFractionDigits: 2
-  }).format(amount);
+  return formatCurrency(String(value ?? '0'));
 }
 
 function numberValue(value: unknown, digits = 2) {
@@ -221,18 +214,10 @@ function cookingDurationInputForRow(row: Row, meatItem: Row | undefined) {
 function saleInputForRow(row: Row, meatItem: Row | undefined) {
   return {
     spawnedWeight: Number(row.spawned_weight ?? 1),
-    baseMeatValue: Number(meatItem?.base_meat_value ?? row.base_meat_value_snapshot ?? 0),
+    baseMeatValue: Number(row.base_meat_value_snapshot ?? meatItem?.base_meat_value ?? 0),
     categoryMultiplier: Number(meatItem?.category_multiplier ?? 1),
     purchasePricePaid: Number(row.purchase_price_paid ?? 0)
   };
-}
-
-function effectiveEquipmentMultiplierForMeat(meatItem: Row | undefined, equipmentItem: Row | undefined) {
-  return calculateEffectiveEquipmentSaleMultiplier({
-    priceMultiplier: equipmentItem?.price_multiplier ?? 1,
-    meatEquipmentTags: arrayValue(meatItem?.equipment_compatibility_tags),
-    equipmentTags: arrayValue(equipmentItem?.equipment_tags)
-  });
 }
 
 function selectBestEquipmentForRow(
@@ -250,30 +235,12 @@ function selectBestEquipmentForRow(
   }) as BestCookingEquipmentSelection | null;
 }
 
-function Shell({ children, right }: { children: React.ReactNode; right?: React.ReactNode }) {
-  return (
-    <Layout className="app-shell">
-      <Header className="app-header">
-        <div className="brand-block">
-          <div className="brand-mark" aria-hidden="true">
-            <Icon icon="lucide:chart-no-axes-combined" width="22" height="22" />
-          </div>
-          <div>
-            <h1 className="brand-title">Meat Tycoon</h1>
-            <p className="brand-subtitle">Real-time cooking economy dashboard</p>
-          </div>
-        </div>
-        {right}
-      </Header>
-      <Content className="content-wrap">{children}</Content>
-    </Layout>
-  );
-}
-
 export function GameDashboard({ model }: { model: GameModel }) {
   if (model.status === 'setup_required') {
     return <SetupRequired model={model} />;
   }
+
+  if (model.status === 'load_error') return <LoadError message={model.message} />;
 
   if (model.status === 'signed_out') {
     return <SignedOut />;
@@ -282,11 +249,16 @@ export function GameDashboard({ model }: { model: GameModel }) {
   return <ReadyDashboard model={model} />;
 }
 
+function LoadError({ message }: { message: string }) {
+  const router = useRouter();
+  return <Shell><div className="load-error-panel"><Alert type="error" showIcon message="Save unavailable" description={message} action={<Button onClick={() => router.refresh()}>Retry</Button>} /></div></Shell>;
+}
+
 function SetupRequired({ model }: { model: Extract<GameModel, { status: 'setup_required' }> }) {
   return (
     <Shell>
-      <Card className="setup-panel" title="Supabase setup required">
-        <Space direction="vertical" size="large">
+      <Card className="setup-panel" title={<PanelTitle icon="lucide:database">Supabase setup required</PanelTitle>}>
+        <div className="setup-stack">
           <Alert
             type="warning"
             showIcon
@@ -310,7 +282,7 @@ function SetupRequired({ model }: { model: Extract<GameModel, { status: 'setup_r
           <Text type="secondary">
             Run the Supabase migration and `npm run seed:catalog` after setting environment variables.
           </Text>
-        </Space>
+        </div>
       </Card>
     </Shell>
   );
@@ -323,20 +295,24 @@ function SignedOut() {
   const [authMode, setAuthMode] = useState<AuthMode>('signin');
 
   async function run(resultPromise: Promise<{ ok: boolean; message?: string }>) {
-    const result = await resultPromise;
-    if (!result.ok) {
-      message.error(result.message ?? 'The account action failed.');
-      return;
+    try {
+      const result = await resultPromise;
+      if (!result.ok) {
+        message.error(result.message ?? 'The account action failed.');
+        return;
+      }
+      if (result.message) message.success(result.message);
+      router.refresh();
+    } catch {
+      message.error('The account service is unavailable. Please retry.');
     }
-    if (result.message) message.success(result.message);
-    router.refresh();
   }
 
   return (
     <Shell>
       <div className="auth-grid">
         <section className="auth-intro">
-          <Title level={1}>Meat Tycoon</Title>
+          <Title level={2}>Meat Tycoon</Title>
           <p>
             Buy fixed-price meat, roll weight, cook in real time, apply durable seasonings,
             and sell through a server-authoritative economy. Guest saves can be linked to an
@@ -344,19 +320,20 @@ function SignedOut() {
           </p>
         </section>
 
-        <Card className="auth-card" title="Start or sign in">
-          <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+        <Card className="auth-card" title={<PanelTitle icon="lucide:key-round">Start or sign in</PanelTitle>}>
+          <div className="auth-stack">
             <Button
               block
               type="primary"
               loading={pending}
-              icon={<Icon icon="lucide:user-round-plus" width="16" height="16" />}
+              icon={<InterfaceIcon icon="lucide:user-round-plus" />}
               onClick={() => startTransition(() => run(startGuestSession()))}
             >
               Continue as guest
             </Button>
 
             <Tabs
+              className="auth-tabs"
               activeKey={authMode}
               onChange={(key) => setAuthMode(key as AuthMode)}
               onTabClick={(key) => setAuthMode(key as AuthMode)}
@@ -383,12 +360,12 @@ function SignedOut() {
               <Button
                 block
                 htmlType="submit"
-                icon={<Icon icon="logos:google-icon" width="16" height="16" />}
+                icon={<InterfaceIcon icon="logos:google-icon" />}
               >
                 Continue with Google
               </Button>
             </form>
-          </Space>
+          </div>
         </Card>
       </div>
     </Shell>
@@ -405,7 +382,7 @@ function AccountForm({
   onSubmit: (values: { email: string; password?: string }) => void;
 }) {
   return (
-    <Form layout="vertical" onFinish={onSubmit} requiredMark={false}>
+    <Form className="auth-form" layout="vertical" onFinish={onSubmit} requiredMark={false}>
       <Form.Item
         label="Email"
         name="email"
@@ -414,7 +391,7 @@ function AccountForm({
           { type: 'email', message: 'Enter a valid email address.' }
         ]}
       >
-        <Input autoComplete="email" />
+        <Input inputMode="email" autoComplete="email" />
       </Form.Item>
       <Form.Item
         label="Password"
@@ -428,7 +405,7 @@ function AccountForm({
         type="primary"
         htmlType="submit"
         loading={pending}
-        icon={<Icon icon="lucide:log-in" width="16" height="16" />}
+        icon={<InterfaceIcon icon="lucide:log-in" />}
       >
         {mode === 'signup' ? 'Sign Up' : 'Sign In'}
       </Button>
@@ -436,30 +413,13 @@ function AccountForm({
   );
 }
 
-type DashboardAction =
-  | { type: 'BUY_MEAT'; tempId: string; price: number; meatItemId: string; displayName: string }
-  | { type: 'BUY_SEASONING'; tempId: string; price: number; seasoningItemId: string; displayName: string; maximumUses: number; baseMultiplier: number }
-  | { type: 'BUY_EQUIPMENT'; price: number; equipmentId: string; displayName: string; equipmentType: string; cookingSlotCount: number; priceMultiplier: number; cookingSpeedMultiplier: number }
-  | { type: 'START_COOKING'; meatInstanceId: string; equipmentId: string; targetCookingState: string; durationSeconds: number; defaultCookingSeconds: number; preEquipmentCookingSeconds: number; equipmentSpeedMultiplier: number; longCookMultiplier: number; tempJobId: string; meatDisplayName: string; equipmentDisplayName: string }
-  | { type: 'APPLY_SEASONING'; meatInstanceId: string; seasoningInstanceId: string; seasoningItemId?: string }
-  | { type: 'SELL_MEAT'; meatInstanceId: string; estimatedPrice: number }
-  | { type: 'SELL_ALL_MEAT'; totalPrice: number }
-  | { type: 'SEASON_ALL_MEAT' }
-  | { type: 'DESTROY_EQUIPMENT'; equipmentId: string }
-  | { type: 'SELL_SEASONING'; seasoningInstanceId: string; estimatedRefund: number }
-  | { type: 'CLAIM_MODIFIER'; modifierId: string }
-  | { type: 'MANUAL_REFRESH_SHOP'; shopType: string; cost: number }
-  | { type: 'UPGRADE_SHOP'; shopType: string; upgradeType: 'luck' | 'speed'; cost: number };
-
 type RunDashboardAction = (
   actionId: string,
-  optimisticPayload: DashboardAction | null,
   promise: Promise<{ ok: boolean; message?: string }>,
   successMessage: string,
   errorMessagePrefix: string
 ) => void;
 type StartCookingActionArgs = {
-  row: Row;
   rowId: string;
   selectedTarget: string;
   bestEquipmentSelection: BestCookingEquipmentSelection | null;
@@ -467,7 +427,6 @@ type StartCookingActionArgs = {
 };
 
 type RawMeatActionControlsProps = {
-  row: Row;
   rowId: string;
   bestEquipmentSelection: BestCookingEquipmentSelection | null;
   selectedTarget: string;
@@ -483,7 +442,6 @@ function equipmentLabelForSelection(bestEquipmentSelection: BestCookingEquipment
 }
 
 function runStartCookingAction({
-  row,
   rowId,
   selectedTarget,
   bestEquipmentSelection,
@@ -496,26 +454,9 @@ function runStartCookingAction({
   }
 
   const selectedEquipment = String(selectedEquipmentItem.id ?? '');
-  const eqName = textValue(selectedEquipmentItem.display_name, 'Equipment');
-  const rawMeatName = relation(row, 'meat_items')?.display_name ?? row.meat_item_id ?? 'Meat';
-  const meatDisplayName = formatMeatName(textValue(rawMeatName, 'Meat'));
 
   runAction(
     `cook-meat-${rowId}`,
-    {
-      type: 'START_COOKING',
-      meatInstanceId: rowId,
-      equipmentId: selectedEquipment,
-      targetCookingState: selectedTarget,
-      durationSeconds: cookingEstimate.durationSeconds,
-      defaultCookingSeconds: cookingEstimate.defaultCookingSeconds,
-      preEquipmentCookingSeconds: cookingEstimate.preEquipmentSeconds,
-      equipmentSpeedMultiplier: cookingEstimate.equipmentSpeedMultiplier,
-      longCookMultiplier: cookingEstimate.longCookMultiplier,
-      tempJobId: `temp-job-${Date.now()}`,
-      meatDisplayName,
-      equipmentDisplayName: eqName
-    },
     startCooking(rowId, selectedEquipment, selectedTarget),
     'Cooking started',
     'Failed to Start Cooking'
@@ -523,7 +464,6 @@ function runStartCookingAction({
 }
 
 function RawMeatActionControls({
-  row,
   rowId,
   bestEquipmentSelection,
   selectedTarget,
@@ -539,18 +479,10 @@ function RawMeatActionControls({
   const isCooking = activeActionIds.has(`cook-meat-${rowId}`);
 
   return (
-    <Flex className="table-actions table-actions-raw" gap={8} justify="end">
+    <Flex className="table-actions table-actions-raw" gap={interfaceDimensions.gapSmall} justify="end">
       <Tag
         title={equipmentLabel}
-        style={{
-          marginInlineEnd: 0,
-          minWidth: 160,
-          maxWidth: 220,
-          overflow: 'hidden',
-          textAlign: 'center',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap'
-        }}
+        className="equipment-label"
       >
         {equipmentLabel}
       </Tag>
@@ -560,19 +492,18 @@ function RawMeatActionControls({
         value={selectedTarget}
         options={targetOptions}
         onChange={(value) => setTargetByMeat((current) => ({ ...current, [rowId]: value }))}
-        style={{ width: 140 }}
+        className="cooking-target-select"
       />
-      <Tag style={{ marginInlineEnd: 0, minWidth: 58, textAlign: 'center' }}>
+      <Tag className="duration-label">
         {cookingEstimate ? formatDurationSeconds(cookingEstimate.durationSeconds) : '-'}
       </Tag>
       <Button
         size="small"
         disabled={!selectedEquipment || !cookingEstimate || activeActionIds.size > 0}
         loading={isCooking}
-        style={{ minWidth: isCooking ? 85 : 60 }}
+        className="action-button"
         onClick={() =>
           runStartCookingAction({
-            row,
             rowId,
             selectedTarget,
             bestEquipmentSelection,
@@ -589,7 +520,6 @@ function RawMeatActionControls({
 function ReadyDashboard({ model }: { model: SignedInModel }) {
   const router = useRouter();
   const { message } = App.useApp();
-  const [, startTransition] = useTransition();
   const [targetByMeat, setTargetByMeat] = useState<Record<string, string>>({});
   const [seasoningByMeat, setSeasoningByMeat] = useState<Record<string, string>>({});
 
@@ -598,15 +528,11 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
     setMounted(true);
   }, []);
 
-  // Unified Client State synchronized with model prop
-  const [clientState, setClientState] = useState<SignedInModel>(model);
+  const state = model;
   const [isAutoSyncing, setIsAutoSyncing] = useState(false);
   const [tick, setTick] = useState(0);
 
-  useEffect(() => {
-    setClientState(model);
-    setIsAutoSyncing(false); // Reset auto-sync flag when we receive new server data
-  }, [model]);
+  useEffect(() => { setIsAutoSyncing(false); }, [model]);
 
   // Client-side 1-second ticking clock
   useEffect(() => {
@@ -620,18 +546,18 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
   useEffect(() => {
     const nowMs = Date.now();
 
-    const hasExpiredCooking = clientState.cookingJobs.some(
+    const hasExpiredCooking = state.cookingJobs.some(
       (j) => new Date(String(j.cooking_target_end_at)).getTime() <= nowMs
     );
 
-    const hasExpiredSpoilage = clientState.ownedMeats.some(
+    const hasExpiredSpoilage = state.ownedMeats.some(
       (m) =>
         m.current_cooking_state !== 'spoiled' &&
         m.spoilage_due_at &&
         new Date(String(m.spoilage_due_at)).getTime() <= nowMs
     );
 
-    const hasExpiredRestock = clientState.shopStates.some(
+    const hasExpiredRestock = state.shopStates.some(
       (s) =>
         s.refresh_due_at &&
         new Date(String(s.refresh_due_at)).getTime() <= nowMs
@@ -655,7 +581,7 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
         }
       })();
     }
-  }, [tick, clientState, isAutoSyncing, router]);
+  }, [tick, state, isAutoSyncing, router]);
 
   // Fine-grained loading states tracking Set
   const [activeActionIds, setActiveActionIds] = useState<Set<string>>(new Set());
@@ -674,324 +600,14 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
     });
   };
 
-  // Optimistic Reducer
-  const [optimisticState, setOptimisticState] = useOptimistic(
-    clientState,
-    (currentState, action: DashboardAction): SignedInModel => {
-      switch (action.type) {
-        case 'BUY_MEAT': {
-          const newMeat = {
-            id: action.tempId,
-            user_id: currentState.user.id,
-            meat_item_id: action.meatItemId,
-            purchase_price_paid: action.price,
-            spawned_weight: 1.0,
-            weight_rarity_result: 'normal',
-            current_cooking_state: 'raw',
-            created_at: new Date().toISOString(),
-            display_name_override: `${action.displayName} (Unpacking...)`,
-            isPlaceholder: true,
-            meat_items: {
-              display_name: `${action.displayName} (Unpacking...)`,
-              category: 'Starter'
-            }
-          };
-          return {
-            ...currentState,
-            save: currentState.save ? { ...currentState.save, balance: Number(currentState.save.balance) - action.price } : null,
-            ownedMeats: [newMeat, ...currentState.ownedMeats],
-            meatStock: currentState.meatStock.map(s =>
-              String(s.item_id) === String(action.meatItemId)
-                ? { ...s, current_stock: Math.max(0, Number(s.current_stock ?? 0) - 1) }
-                : s
-            )
-          };
-        }
-
-        case 'BUY_SEASONING': {
-          const newSeasoning = {
-            id: action.tempId,
-            user_id: currentState.user.id,
-            seasoning_item_id: action.seasoningItemId,
-            remaining_uses: action.maximumUses,
-            maximum_uses: action.maximumUses,
-            acquired_at: new Date().toISOString(),
-            seasoning_items: {
-              display_name: action.displayName,
-              base_multiplier: action.baseMultiplier,
-              maximum_uses: action.maximumUses
-            }
-          };
-          return {
-            ...currentState,
-            save: currentState.save ? { ...currentState.save, balance: Number(currentState.save.balance) - action.price } : null,
-            ownedSeasonings: [newSeasoning, ...currentState.ownedSeasonings],
-            seasoningStock: currentState.seasoningStock.map(s =>
-              String(s.item_id) === String(action.seasoningItemId)
-                ? { ...s, current_stock: Math.max(0, Number(s.current_stock ?? 0) - 1) }
-                : s
-            )
-          };
-        }
-
-        case 'BUY_EQUIPMENT': {
-          const newOwnedEquipment = currentState.ownedEquipment.map((e) => {
-            if (String(e.equipment_item_id) === String(action.equipmentId)) {
-              return {
-                ...e,
-                quantity: Number(e.quantity ?? 1) + 1
-              };
-            }
-            return e;
-          });
-
-          const alreadyOwned = currentState.ownedEquipment.some(
-            (e) => String(e.equipment_item_id) === String(action.equipmentId)
-          );
-
-          const finalOwned = alreadyOwned
-            ? newOwnedEquipment
-            : [
-                ...currentState.ownedEquipment,
-                {
-                  user_id: currentState.user.id,
-                  equipment_item_id: action.equipmentId,
-                  active: true,
-                  acquired_at: new Date().toISOString(),
-                  quantity: 1,
-                  equipment_items: {
-                    id: action.equipmentId,
-                    display_name: action.displayName,
-                    equipment_type: action.equipmentType,
-                    purchase_price: action.price,
-                    price_multiplier: action.priceMultiplier,
-                    cooking_speed_multiplier: action.cookingSpeedMultiplier,
-                    cooking_slot_count: action.cookingSlotCount
-                  }
-                }
-              ];
-
-          return {
-            ...currentState,
-            save: currentState.save ? { ...currentState.save, balance: Number(currentState.save.balance) - action.price } : null,
-            ownedEquipment: finalOwned
-          };
-        }
-
-        case 'START_COOKING': {
-          const currentMeat = currentState.ownedMeats.find(m => String(m.id) === String(action.meatInstanceId));
-          const updatedMeats = currentState.ownedMeats.map(m =>
-            String(m.id) === String(action.meatInstanceId)
-              ? { ...m, current_cooking_state: 'cooking' }
-              : m
-          );
-          const newJob = {
-            id: action.tempJobId,
-            user_id: currentState.user.id,
-            meat_instance_id: action.meatInstanceId,
-            equipment_item_id: action.equipmentId,
-            equipment_slot_index: 0,
-            cooking_started_at: new Date().toISOString(),
-            cooking_target_end_at: new Date(Date.now() + action.durationSeconds * 1000).toISOString(),
-            cooking_duration_seconds: action.durationSeconds,
-            default_cooking_seconds_snapshot: action.defaultCookingSeconds,
-            pre_equipment_cooking_seconds_snapshot: action.preEquipmentCookingSeconds,
-            equipment_speed_multiplier_snapshot: action.equipmentSpeedMultiplier,
-            long_cook_multiplier_snapshot: action.longCookMultiplier,
-            target_cooking_state: action.targetCookingState,
-            cooking_completed: false,
-            meat_instances: {
-              id: action.meatInstanceId,
-              meat_items: {
-                display_name: currentMeat ? textValue(relation(currentMeat as Row, 'meat_items')?.display_name, 'Meat') : 'Meat'
-              }
-            },
-            equipment_items: {
-              id: action.equipmentId,
-              display_name: action.equipmentDisplayName
-            }
-          };
-          return {
-            ...currentState,
-            ownedMeats: updatedMeats.map(m =>
-              String(m.id) === String(action.meatInstanceId)
-                ? { ...m, long_cook_multiplier_snapshot: action.longCookMultiplier }
-                : m
-            ),
-            cookingJobs: [...currentState.cookingJobs, newJob]
-          };
-        }
-
-        case 'APPLY_SEASONING': {
-          const targetSeasoning = currentState.ownedSeasonings.find(s => String(s.id) === String(action.seasoningInstanceId));
-          const updatedSeasonings = currentState.ownedSeasonings.map(s =>
-            String(s.id) === String(action.seasoningInstanceId)
-              ? { ...s, remaining_uses: Math.max(0, Number(s.remaining_uses ?? 0) - 1) }
-              : s
-          ).filter(s => Number(s.remaining_uses) > 0);
-
-          const updatedMeats = currentState.ownedMeats.map(m => {
-            if (m.id === action.meatInstanceId) {
-              const applied = (m['applied_seasonings'] as unknown[]) ?? [];
-              const seasoningItem = targetSeasoning ? relation(targetSeasoning as Row, 'seasoning_items') : undefined;
-              return {
-                ...m,
-                applied_seasonings: [
-                  ...applied,
-                  {
-                    seasoning_instance_id: String(action.seasoningInstanceId),
-                    baseMultiplier: Number(seasoningItem?.base_multiplier ?? 1),
-                    remainingUses: 1,
-                    maximumUses: 1
-                  }
-                ]
-              };
-            }
-            return m;
-          });
-
-          return {
-            ...currentState,
-            ownedSeasonings: updatedSeasonings,
-            ownedMeats: updatedMeats
-          };
-        }
-
-        case 'SELL_MEAT': {
-          return {
-            ...currentState,
-            save: currentState.save ? { ...currentState.save, balance: Number(currentState.save.balance) + action.estimatedPrice } : null,
-            ownedMeats: currentState.ownedMeats.filter(m => String(m.id) !== String(action.meatInstanceId))
-          };
-        }
-
-        case 'SELL_ALL_MEAT': {
-          return {
-            ...currentState,
-            save: currentState.save ? { ...currentState.save, balance: Number(currentState.save.balance) + action.totalPrice } : null,
-            ownedMeats: currentState.ownedMeats.filter(m => !isSaleableCookedState(m.current_cooking_state))
-          };
-        }
-
-        case 'SEASON_ALL_MEAT': {
-          return currentState;
-        }
-
-        case 'DESTROY_EQUIPMENT': {
-          const finalOwned = currentState.ownedEquipment.map((e) => {
-            if (String(e.equipment_item_id) === String(action.equipmentId)) {
-              return {
-                ...e,
-                quantity: Math.max(0, Number(e.quantity ?? 1) - 1)
-              };
-            }
-            return e;
-          }).filter((e) => Number(e.quantity ?? 1) > 0);
-
-          return {
-            ...currentState,
-            ownedEquipment: finalOwned
-          };
-        }
-
-        case 'SELL_SEASONING': {
-          return {
-            ...currentState,
-            save: currentState.save ? { ...currentState.save, balance: Number(currentState.save.balance) + action.estimatedRefund } : null,
-            ownedSeasonings: currentState.ownedSeasonings.filter(s => String(s.id) !== String(action.seasoningInstanceId))
-          };
-        }
-
-        case 'CLAIM_MODIFIER': {
-          const modDef = currentState.saleModifierDefinitions.find(d => String(d.id) === String(action.modifierId));
-          const newActive = modDef ? {
-            id: `temp-active-${Date.now()}`,
-            user_id: currentState.user.id,
-            definition_id: action.modifierId,
-            multiplier: Number(modDef.multiplier),
-            active: true
-          } : null;
-          return {
-            ...currentState,
-            activeSaleModifiers: newActive ? [...currentState.activeSaleModifiers, newActive] : currentState.activeSaleModifiers
-          };
-        }
-
-        case 'MANUAL_REFRESH_SHOP': {
-          return {
-            ...currentState,
-            save: currentState.save ? { ...currentState.save, balance: Number(currentState.save.balance) - action.cost } : null
-          };
-        }
-
-        case 'UPGRADE_SHOP': {
-          return {
-            ...currentState,
-            save: currentState.save ? { ...currentState.save, balance: Number(currentState.save.balance) - action.cost } : null,
-            shopStates: currentState.shopStates.map(s =>
-              s.shop_type === action.shopType
-                ? {
-                    ...s,
-                    luck_level: action.upgradeType === 'luck' ? Number(s.luck_level ?? 0) + 1 : Number(s.luck_level ?? 0),
-                    refresh_speed_level: action.upgradeType === 'speed' ? Number(s.refresh_speed_level ?? 0) + 1 : Number(s.refresh_speed_level ?? 0)
-                  }
-                : s
-            )
-          };
-        }
-
-        default:
-          return currentState;
-      }
-    }
-  );
-
-  // Helper upgrade math formulas
-  const getStageMultiplier = (stage: number) => {
-    const s = Math.max(1, stage);
-    if (s === 1) return 1;
-    if (s === 2) return 5;
-    if (s === 3) return 25;
-    if (s === 4) return 150;
-    if (s === 5) return 1000;
-    return 10000;
-  };
-
-  const getManualRefreshCost = (shopType: string, stage: number, luckLevel: number) => {
-    const base = shopType === 'meat' ? 50 : shopType === 'seasoning' ? 100 : 0;
-    return Number((base * getStageMultiplier(stage) * (1 + Math.max(0, luckLevel) * 0.15)).toFixed(2));
-  };
-
-  const getRefreshSpeedUpgradeCost = (shopType: string, stage: number, currentLevel: number) => {
-    const base = shopType === 'meat' ? 1000 : shopType === 'seasoning' ? 2000 : 0;
-    const val = base * Math.pow(Math.max(0, currentLevel) + 1, 2) * Math.pow(1.65, Math.max(0, currentLevel)) * getStageMultiplier(stage);
-    return Number(val.toFixed(2));
-  };
-
-  const getLuckUpgradeCost = (shopType: string, stage: number, currentLevel: number) => {
-    const base = shopType === 'meat' ? 5000 : shopType === 'seasoning' ? 7500 : 0;
-    const val = base * Math.pow(Math.max(0, currentLevel) + 1, 2.4) * Math.pow(1.85, Math.max(0, currentLevel)) * getStageMultiplier(stage);
-    return Number(val.toFixed(2));
-  };
-
-  const getSeasoningSellRefund = (purchasePrice: number, remainingUses: number, maximumUses: number) => {
-    return Number((purchasePrice * 0.50 * (remainingUses / maximumUses)).toFixed(2));
-  };
-
-  // Centralized action runner with localized loaders and rollback feedback
+  // Centralized action runner with localized loading and error feedback
   async function runAction(
     actionId: string,
-    optimisticPayload: DashboardAction | null,
     promise: Promise<{ ok: boolean; message?: string }>,
     successMessage: string,
     errorMessagePrefix: string
   ) {
     startAction(actionId);
-    if (optimisticPayload) {
-      startTransition(() => {
-        setOptimisticState(optimisticPayload);
-      });
-    }
     try {
       const result = await promise;
       if (!result.ok) {
@@ -1010,42 +626,38 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
 
   // Periodic automatic sync
   useEffect(() => {
-    const interval = setInterval(async () => {
-      await resolveTimeProgress();
-      router.refresh();
+    const interval = setInterval(() => {
+      resolveTimeProgress().then(() => router.refresh()).catch(() => {
+        message.error('Time sync failed. Your last saved state is still shown.');
+      });
     }, 15000);
 
     return () => clearInterval(interval);
-  }, [router]);
+  }, [message, router]);
 
   const meatById = useMemo(
-    () => new Map(optimisticState.meats.map((item) => [String(item.id), item])),
-    [optimisticState.meats]
-  );
-  const equipmentById = useMemo(
-    () => new Map(optimisticState.equipment.map((item) => [String(item.id), item])),
-    [optimisticState.equipment]
+    () => new Map(state.meats.map((item) => [String(item.id), item])),
+    [state.meats]
   );
   const seasoningById = useMemo(
-    () => new Map(optimisticState.seasonings.map((item) => [String(item.id), item])),
-    [optimisticState.seasonings]
+    () => new Map(state.seasonings.map((item) => [String(item.id), item])),
+    [state.seasonings]
   );
   const shopStateByType = useMemo(
-    () => new Map(optimisticState.shopStates.map((item) => [String(item.shop_type), item])),
-    [optimisticState.shopStates]
+    () => new Map(state.shopStates.map((item) => [String(item.shop_type), item])),
+    [state.shopStates]
   );
-  const activeModifierIds = useMemo(
-    () => new Set(optimisticState.activeSaleModifiers.map((item) => String(item.definition_id))),
-    [optimisticState.activeSaleModifiers]
+  const activeModifierIds = new Set(
+    state.activeSaleModifiers.filter((modifier) => isSaleModifierActive(modifier)).map((item) => item.definition_id)
   );
   const activeEquipmentCandidates = useMemo(() => {
     const occupiedByEquipment = new Map<string, number>();
-    optimisticState.cookingJobs.forEach((job) => {
+    state.cookingJobs.forEach((job) => {
       const equipmentId = String(job.equipment_item_id ?? '');
       occupiedByEquipment.set(equipmentId, (occupiedByEquipment.get(equipmentId) ?? 0) + 1);
     });
 
-    return optimisticState.ownedEquipment
+    return state.ownedEquipment
       .map((ownedEquipment): EquipmentCandidate | null => {
         const equipment = relation(ownedEquipment, 'equipment_items');
         if (!equipment || ownedEquipment.active === false) {
@@ -1067,10 +679,17 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
         };
       })
       .filter((item): item is EquipmentCandidate => Boolean(item));
-  }, [optimisticState.cookingJobs, optimisticState.ownedEquipment]);
+  }, [state.cookingJobs, state.ownedEquipment]);
 
   if (!mounted) {
-    return null;
+    return (
+      <Shell>
+        <div className="loading-state" role="status">
+          <InterfaceIcon icon="lucide:hourglass" />
+          <span>Loading dashboard</span>
+        </div>
+      </Shell>
+    );
   }
 
   const targetOptions = [
@@ -1078,13 +697,13 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
     { value: 'well_cooked', label: 'Well Cooked' },
     { value: 'perfectly_cooked', label: 'Perfectly Cooked' }
   ];
-  const rawMeats = optimisticState.ownedMeats.filter((item) => textValue(item.current_cooking_state) === 'raw');
-  const readyMeats = optimisticState.ownedMeats.filter((item) => isSaleableCookedState(item.current_cooking_state));
-  const heldMeats = optimisticState.ownedMeats.filter((item) => {
+  const rawMeats = state.ownedMeats.filter((item) => textValue(item.current_cooking_state) === 'raw');
+  const readyMeats = state.ownedMeats.filter((item) => isSaleableCookedState(item.current_cooking_state));
+  const heldMeats = state.ownedMeats.filter((item) => {
     const state = textValue(item.current_cooking_state);
     return state !== 'raw' && !SALEABLE_COOKED_STATES.has(state);
   });
-  const hasAnySeasonings = optimisticState.ownedSeasonings.some(s => Number(s.remaining_uses ?? 0) > 0);
+  const hasAnySeasonings = state.ownedSeasonings.some(s => Number(s.remaining_uses ?? 0) > 0);
 
   function shopControls(shopType: 'meat' | 'seasoning') {
     const state = shopStateByType.get(shopType);
@@ -1094,9 +713,6 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
     const isSpeedUpgrading = activeActionIds.has(`speed-${shopType}`);
     const isLuckUpgrading = activeActionIds.has(`luck-${shopType}`);
 
-    const refreshCost = getManualRefreshCost(shopType, Number(state?.shop_stage ?? 1), Number(state?.luck_level ?? 0));
-    const speedCost = getRefreshSpeedUpgradeCost(shopType, Number(state?.shop_stage ?? 1), Number(state?.refresh_speed_level ?? 0));
-    const luckCost = getLuckUpgradeCost(shopType, Number(state?.shop_stage ?? 1), Number(state?.luck_level ?? 0));
 
     return (
       <div className="shop-controls">
@@ -1111,12 +727,11 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
             size="small"
             loading={isRefreshing}
             disabled={activeActionIds.size > 0}
-            style={{ minWidth: isRefreshing ? 100 : 70 }}
-            icon={<Icon icon="lucide:refresh-cw" width="15" height="15" />}
+            className="action-button"
+            icon={<InterfaceIcon icon="lucide:refresh-cw" />}
             onClick={() =>
               runAction(
                 `refresh-${shopType}`,
-                { type: 'MANUAL_REFRESH_SHOP', shopType, cost: refreshCost },
                 manualRefreshShop(shopType),
                 `${label} shop refreshed`,
                 `Failed to Refresh ${label} Shop`
@@ -1129,12 +744,11 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
             size="small"
             loading={isSpeedUpgrading}
             disabled={activeActionIds.size > 0}
-            style={{ minWidth: isSpeedUpgrading ? 100 : 65 }}
-            icon={<Icon icon="lucide:timer" width="15" height="15" />}
+            className="action-button"
+            icon={<InterfaceIcon icon="lucide:timer" />}
             onClick={() =>
               runAction(
                 `speed-${shopType}`,
-                { type: 'UPGRADE_SHOP', shopType, upgradeType: 'speed', cost: speedCost },
                 buyShopRefreshSpeed(shopType),
                 'Refresh speed upgraded',
                 `Failed to Upgrade ${label} Speed`
@@ -1147,12 +761,11 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
             size="small"
             loading={isLuckUpgrading}
             disabled={activeActionIds.size > 0}
-            style={{ minWidth: isLuckUpgrading ? 100 : 60 }}
-            icon={<Icon icon="lucide:sparkles" width="15" height="15" />}
+            className="action-button"
+            icon={<InterfaceIcon icon="lucide:sparkles" />}
             onClick={() =>
               runAction(
                 `luck-${shopType}`,
-                { type: 'UPGRADE_SHOP', shopType, upgradeType: 'luck', cost: luckCost },
                 buyShopLuck(shopType),
                 'Luck upgraded',
                 `Failed to Upgrade ${label} Luck`
@@ -1170,13 +783,7 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
     if (row.starter_only) {
       return (
         <Tag
-          style={{
-            backgroundColor: '#e2e8f0',
-            color: '#475569',
-            borderColor: '#cbd5e1',
-            fontWeight: 500,
-            whiteSpace: 'nowrap'
-          }}
+          className="stock-tag" data-status="unlimited"
         >
           Unlimited
         </Tag>
@@ -1188,13 +795,7 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
     if (current === 0) {
       return (
         <Tag
-          style={{
-            backgroundColor: '#f8d7da',
-            color: '#721c24',
-            borderColor: '#f5c6cb',
-            fontWeight: 500,
-            whiteSpace: 'nowrap'
-          }}
+          className="stock-tag" data-status="empty"
         >
           Out of stock
         </Tag>
@@ -1204,13 +805,7 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
     if (current <= 2) {
       return (
         <Tag
-          style={{
-            backgroundColor: '#fff3cd',
-            color: '#856404',
-            borderColor: '#ffeeba',
-            fontWeight: 500,
-            whiteSpace: 'nowrap'
-          }}
+          className="stock-tag" data-status="low"
         >
           {current} / {maximum} (Low)
         </Tag>
@@ -1219,13 +814,7 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
 
     return (
       <Tag
-        style={{
-          backgroundColor: '#d4edda',
-          color: '#155724',
-          borderColor: '#c3e6cb',
-          fontWeight: 500,
-          whiteSpace: 'nowrap'
-        }}
+        className="stock-tag" data-status="available"
       >
         {current} / {maximum}
       </Tag>
@@ -1253,20 +842,17 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
     {
       title: 'Stock',
       key: 'stock',
-      width: 130,
+      width: interfaceDimensions.columns.stock,
       render: (_, row) => renderStockBadge(row)
     },
     {
       title: '',
-      width: 120,
+      width: interfaceDimensions.columns.action,
       render: (_, row) => {
         const isStarter = Boolean(row.starter_only);
         const hasStock = isStarter || Number(row.current_stock ?? 0) > 0;
         const itemId = String(row.item_id ?? row.id);
         const isBuying = activeActionIds.has(`buy-meat-${itemId}`);
-        const price = Number(row.purchase_price ?? 0);
-        const rawName = row.display_name ?? meatById.get(itemId)?.display_name ?? itemId;
-        const displayName = formatMeatName(textValue(rawName, 'Meat'));
         return (
           <div className="table-actions">
             {hasStock ? (
@@ -1275,11 +861,10 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
                 type="primary"
                 loading={isBuying}
                 disabled={activeActionIds.size > 0}
-                style={{ minWidth: isBuying ? 95 : 60 }}
+                className="action-button"
                 onClick={() =>
                   runAction(
                     `buy-meat-${itemId}`,
-                    { type: 'BUY_MEAT', price, meatItemId: itemId, displayName, tempId: `temp-meat-${Date.now()}` },
                     buyMeat(itemId),
                     'Meat bought',
                     'Failed to Buy Meat'
@@ -1321,29 +906,20 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
     },
     {
       title: '',
-      width: 120,
+      width: interfaceDimensions.columns.action,
       render: (_, row) => {
         const itemId = String(row.id);
         const isBuying = activeActionIds.has(`buy-equipment-${itemId}`);
-        const price = Number(row.purchase_price ?? 0);
-        const displayName = textValue(row.display_name, 'Equipment');
-        const eqType = textValue(row.equipment_type, 'oven');
-        const slotCount = Number(row.cooking_slot_count ?? 1);
-        const mult = Number(row.price_multiplier ?? 1);
-        const cookingSpeedMultiplier = Number(row.cooking_speed_multiplier ?? 1);
-
-
         return (
           <div className="table-actions">
             <Button
               size="small"
               loading={isBuying}
               disabled={activeActionIds.size > 0}
-              style={{ minWidth: isBuying ? 95 : 60 }}
+              className="action-button"
               onClick={() =>
                 runAction(
                   `buy-equipment-${itemId}`,
-                  { type: 'BUY_EQUIPMENT', price, equipmentId: itemId, displayName, equipmentType: eqType, cookingSlotCount: slotCount, priceMultiplier: mult, cookingSpeedMultiplier },
                   buyEquipment(itemId),
                   'Equipment bought',
                   'Failed to Buy Equipment'
@@ -1390,21 +966,16 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
     {
       title: 'Stock',
       key: 'stock',
-      width: 130,
+      width: interfaceDimensions.columns.stock,
       render: (_, row) => renderStockBadge(row)
     },
     {
       title: '',
-      width: 120,
+      width: interfaceDimensions.columns.action,
       render: (_, row) => {
         const hasStock = Number(row.current_stock ?? 0) > 0;
         const itemId = String(row.item_id ?? row.id);
         const isBuying = activeActionIds.has(`buy-seasoning-${itemId}`);
-        const price = Number(row.purchase_price ?? 0);
-        const displayName = textValue(row.display_name, 'Seasoning');
-        const seasoningDef = seasoningById.get(itemId);
-        const maxUses = Number(seasoningDef?.maximum_uses ?? row.maximum_uses ?? 5);
-        const baseMult = Number(seasoningDef?.base_multiplier ?? row.base_multiplier ?? 1);
         return (
           <div className="table-actions">
             {hasStock ? (
@@ -1412,11 +983,10 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
                 size="small"
                 loading={isBuying}
                 disabled={activeActionIds.size > 0}
-                style={{ minWidth: isBuying ? 95 : 60 }}
+                className="action-button"
                 onClick={() =>
                   runAction(
                     `buy-seasoning-${itemId}`,
-                    { type: 'BUY_SEASONING', price, seasoningItemId: itemId, displayName, tempId: `temp-seasoning-${Date.now()}`, maximumUses: maxUses, baseMultiplier: baseMult },
                     buySeasoning(itemId),
                     'Seasoning bought',
                     'Failed to Buy Seasoning'
@@ -1438,11 +1008,8 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
     return [
       {
         title: 'Meat',
-        width: 120,
+        width: interfaceDimensions.columns.meat,
         render: (_, row) => {
-          if (row['display_name_override']) {
-            return formatMeatName(String(row['display_name_override']));
-          }
           return formatMeatName(textValue(relation(row, 'meat_items')?.display_name, textValue(row.meat_item_id)));
         }
       },
@@ -1450,19 +1017,19 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
         title: 'Weight',
         dataIndex: 'spawned_weight',
         align: 'right',
-        width: 80,
+        width: interfaceDimensions.columns.weight,
         render: formatWeightKg
       },
       {
         title: 'State',
         dataIndex: 'current_cooking_state',
-        width: 110,
+        width: interfaceDimensions.columns.state,
         render: (value) => <Tag>{formatState(value)}</Tag>
       },
       {
         title: 'Spoils',
         dataIndex: 'spoilage_due_at',
-        width: 160,
+        width: interfaceDimensions.columns.countdown,
         className: 'column-nowrap',
         render: (value, row) => {
           if (row.current_cooking_state === 'spoiled') {
@@ -1474,7 +1041,7 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
       {
         title: 'Roll',
         dataIndex: 'weight_rarity_result',
-        width: 80,
+        width: interfaceDimensions.columns.rarity,
         render: (value) => <Tag color={rarityColor(value)}>{formatState(value)}</Tag>
       },
       {
@@ -1495,7 +1062,7 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
               (as) => String(as.seasoning_instance_id)
             )
           );
-          const availableSeasonings = optimisticState.ownedSeasonings.filter(
+          const availableSeasonings = state.ownedSeasonings.filter(
             (s) => !appliedIds.has(String(s.id)) && Number(s.remaining_uses ?? 0) > 0
           );
           const selectedSeasoning = availableSeasonings.some((s) => String(s.id) === seasoningByMeat[rowId])
@@ -1513,7 +1080,6 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
           if (tableType === 'raw') {
             return (
               <RawMeatActionControls
-                row={row}
                 rowId={rowId}
                 bestEquipmentSelection={bestEquipmentSelection}
                 selectedTarget={selectedTarget}
@@ -1528,7 +1094,7 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
           if (tableType === 'ready') {
             const hasSeasonings = availableSeasonings.length > 0;
             return (
-              <Flex className={`table-actions ${hasSeasonings ? 'table-actions-ready-season' : 'table-actions-ready-sell'}`} gap={8} justify="end">
+              <Flex className={`table-actions ${hasSeasonings ? 'table-actions-ready-season' : 'table-actions-ready-sell'}`} gap={interfaceDimensions.gapSmall} justify="end">
                 {hasSeasonings && (
                   <>
                     <Select
@@ -1538,17 +1104,16 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
                       placeholder="Seasoning"
                       options={seasoningOptionsForMeat}
                       onChange={(value) => setSeasoningByMeat((current) => ({ ...current, [rowId]: value }))}
-                      style={{ width: 160 }}
+                      className="seasoning-select"
                     />
                     <Button
                       size="small"
                       disabled={!selectedSeasoning || activeActionIds.size > 0}
                       loading={isSeasoning}
-                      style={{ minWidth: isSeasoning ? 100 : 60 }}
+                      className="action-button"
                       onClick={() =>
                         runAction(
                           `season-meat-${rowId}`,
-                          { type: 'APPLY_SEASONING', meatInstanceId: rowId, seasoningInstanceId: selectedSeasoning },
                           applySeasoning(rowId, selectedSeasoning),
                           'Seasoning applied',
                           'Failed to Apply Seasoning'
@@ -1564,32 +1129,10 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
                   type="primary"
                   loading={isSelling}
                   disabled={activeActionIds.size > 0}
-                  style={{ minWidth: isSelling ? 85 : 60 }}
+                  className="action-button"
                   onClick={() => {
-                    const meatItem = relation(row, 'meat_items') ?? meatById.get(String(row.meat_item_id));
-                    const baseMeatVal = Number(meatItem?.base_meat_value ?? row.base_meat_value_snapshot ?? 0);
-                    const spawnedW = Number(row.spawned_weight ?? 0);
-                    const purchasePaid = Number(row.purchase_price_paid ?? 0);
-                    const cookState = String(row.current_cooking_state ?? 'raw');
-                    const eqId = String(row.selected_equipment_item_id ?? '');
-                    const eqItem = equipmentById.get(eqId);
-                    const eqMult = effectiveEquipmentMultiplierForMeat(meatItem, eqItem);
-
-                    const saleEstimate = calculateSaleValue({
-                      cookingState: cookState,
-                      spawnedWeight: spawnedW,
-                      baseMeatValue: baseMeatVal,
-                      purchasePricePaid: purchasePaid,
-                      categoryMultiplier: Number(meatItem?.category_multiplier ?? 1),
-                      equipmentMultiplier: eqMult,
-                      longCookMultiplier: Number(row.long_cook_multiplier_snapshot ?? 1),
-                      seasonings: (row['applied_seasonings'] as { baseMultiplier: number; remainingUses: number; maximumUses: number }[]) ?? []
-                    });
-                    const estPrice = Number(saleEstimate.finalSellingPrice);
-
                     runAction(
                       `sell-meat-${rowId}`,
-                      { type: 'SELL_MEAT', meatInstanceId: rowId, estimatedPrice: estPrice },
                       sellMeat(rowId),
                       'Meat sold',
                       'Failed to Sell Meat'
@@ -1604,7 +1147,7 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
 
           // tableType === 'held'
           return (
-            <Flex className="table-actions table-actions-held" gap={8} justify="end">
+            <Flex className="table-actions table-actions-held" gap={interfaceDimensions.gapSmall} justify="end">
               <Tag>Not ready</Tag>
             </Flex>
           );
@@ -1622,12 +1165,11 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
           <Button
             loading={isSyncing}
             disabled={activeActionIds.size > 0}
-            style={{ minWidth: isSyncing ? 85 : 60 }}
-            icon={<Icon icon="lucide:refresh-cw" width="16" height="16" />}
+            className="action-button"
+            icon={<InterfaceIcon icon="lucide:refresh-cw" />}
             onClick={() =>
               runAction(
                 'sync-time',
-                null,
                 resolveTimeProgress(),
                 'Time progress resolved',
                 'Failed to Sync Time'
@@ -1637,7 +1179,7 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
             {isSyncing ? 'Syncing...' : 'Sync time'}
           </Button>
           <form action={signOut}>
-            <Button htmlType="submit" icon={<Icon icon="lucide:log-out" width="16" height="16" />}>
+            <Button htmlType="submit" icon={<InterfaceIcon icon="lucide:log-out" />}>
               Sign out
             </Button>
           </form>
@@ -1645,35 +1187,27 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
       }
     >
       <div className="stat-grid">
-        <Card>
-          <Statistic title="Balance" value={money(optimisticState.save?.balance)} />
+        <Card className="balance-card">
+          <Statistic title={<span className="stat-label"><InterfaceIcon icon="lucide:wallet" />Balance</span>} value={money(state.save?.balance)} />
         </Card>
         <Card>
-          <Statistic title="Unsold meat" value={optimisticState.ownedMeats.length} />
+          <Statistic title={<span className="stat-label"><InterfaceIcon icon="lucide:beef" />Unsold meat</span>} value={state.ownedMeats.length} />
         </Card>
         <Card>
-          <Statistic title="Active cooking jobs" value={optimisticState.cookingJobs.length} />
+          <Statistic title={<span className="stat-label"><InterfaceIcon icon="lucide:flame" />Active cooking jobs</span>} value={state.cookingJobs.length} />
         </Card>
-        <Card>
-          <Statistic title="Best sale" value={money(optimisticState.stats?.best_sale_value)} />
+        <Card className="best-sale-card">
+          <Statistic title={<span className="stat-label"><InterfaceIcon icon="lucide:trending-up" />Best sale</span>} value={money(state.stats?.best_sale_value)} />
         </Card>
       </div>
 
-      {optimisticState.user.isAnonymous && (
-        <Alert
-          style={{ marginBottom: 16 }}
-          type="info"
-          showIcon
-          message="Guest save active"
-          description="Create or sign in to an account to keep this save across devices. Existing accounts are not merged or overwritten."
-        />
-      )}
+      <AccountAccess user={state.user} />
 
-      {optimisticState.saleModifierDefinitions.length > 0 && (
+      {state.saleModifierDefinitions.length > 0 && (
         <div className="modifier-strip">
           <Space wrap>
-            <Text strong>Sale modifiers</Text>
-            {optimisticState.saleModifierDefinitions.map((modifier) => {
+            <PanelTitle icon="lucide:badge-percent">Sale modifiers</PanelTitle>
+            {state.saleModifierDefinitions.map((modifier) => {
               const modifierId = String(modifier.id);
               const isActive = activeModifierIds.has(modifierId);
               const isClaiming = activeActionIds.has(`claim-modifier-${modifierId}`);
@@ -1684,19 +1218,23 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
                   size="small"
                   disabled={isActive || activeActionIds.size > 0}
                   loading={isClaiming}
-                  style={{ minWidth: isClaiming ? 95 : 60 }}
-                  icon={<Icon icon={isActive ? 'lucide:badge-check' : 'lucide:badge-plus'} width="15" height="15" />}
+                  className="action-button"
+                  icon={<InterfaceIcon icon={isActive ? 'lucide:badge-check' : 'lucide:badge-plus'} />}
                   onClick={() =>
                     runAction(
                       `claim-modifier-${modifierId}`,
-                      { type: 'CLAIM_MODIFIER', modifierId },
                       claimSaleModifier(modifierId),
                       'Sale modifier claimed',
                       'Failed to Claim Sale Modifier'
                     )
                   }
                 >
-                  {isClaiming ? 'Claiming...' : `${textValue(modifier.display_name, modifierId)} ${numberValue(Number(modifier.multiplier) * 100, 0)}%`}
+                  <span className="modifier-label">
+                    <span aria-hidden={isClaiming} data-visible={!isClaiming}>
+                      {`${textValue(modifier.display_name, modifierId)} ${numberValue(Number(modifier.multiplier) * 100, 0)}%`}
+                    </span>
+                    <span aria-hidden={!isClaiming} data-visible={isClaiming}>Claiming...</span>
+                  </span>
                 </Button>
               );
             })}
@@ -1705,45 +1243,46 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
       )}
 
       <Tabs
+        className="workspace-tabs"
         items={[
           {
             key: 'kitchen',
-            label: 'Kitchen',
+            label: <span className="tab-label"><InterfaceIcon icon="lucide:cooking-pot" />Kitchen</span>,
             children: (
-              <Flex className="kitchen-workspace" gap={16} align="start">
-                <Flex className="meat-flow" vertical gap={16}>
-                  <Card title="Raw meat" extra={<Tag>Cook before sale</Tag>}>
+              <Flex className="kitchen-workspace" gap={interfaceDimensions.gap} align="start">
+                <Flex className="meat-flow" vertical gap={interfaceDimensions.gap}>
+                  <Card title={<PanelTitle icon="lucide:beef">Raw meat</PanelTitle>} extra={<Tag>Cook before sale</Tag>}>
                     <Table
                       rowKey="id"
                       size="small"
                       columns={getMeatColumns('raw')}
                       dataSource={rawMeats}
                       pagination={{ pageSize: 6, showSizeChanger: false }}
-                      scroll={{ x: 940 }}
+                      scroll={{ x: interfaceDimensions.tables.raw }}
                     />
                   </Card>
                   {heldMeats.length > 0 && (
-                    <Card title="Needs attention">
+                    <Card title={<PanelTitle icon="lucide:circle-alert">Needs attention</PanelTitle>}>
                       <Table
                         rowKey="id"
                         size="small"
                         columns={getMeatColumns('held')}
                         dataSource={heldMeats}
                         pagination={{ pageSize: 4, showSizeChanger: false }}
-                        scroll={{ x: 630 }}
+                        scroll={{ x: interfaceDimensions.tables.held }}
                       />
                     </Card>
                   )}
                 </Flex>
-                <Flex className="meat-flow" vertical gap={16}>
-                  <Card title="Active cooking">
-                    {optimisticState.cookingJobs.length ? (
+                <Flex className="meat-flow" vertical gap={interfaceDimensions.gap}>
+                  <Card title={<PanelTitle icon="lucide:cooking-pot">Active cooking</PanelTitle>}>
+                    {state.cookingJobs.length ? (
                       <Table<Row>
                         rowKey="id"
                         size="small"
-                        dataSource={optimisticState.cookingJobs}
+                        dataSource={state.cookingJobs}
                         pagination={false}
-                        scroll={{ x: 650 }}
+                        scroll={{ x: interfaceDimensions.tables.cooking }}
                         columns={[
                           {
                             title: 'Meat',
@@ -1752,7 +1291,7 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
                               if (displayName) {
                                 return formatMeatName(String(displayName));
                               }
-                              const instance = optimisticState.ownedMeats.find(m => String(m.id) === String(row.meat_instance_id));
+                              const instance = state.ownedMeats.find(m => String(m.id) === String(row.meat_instance_id));
                               if (instance) {
                                 const mId = String(instance.meat_item_id);
                                 const catMeat = meatById.get(mId);
@@ -1781,14 +1320,13 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
                               const countdown = formatCountdown(String(row.cooking_target_end_at));
 
                               return (
-                                <div style={{ width: '100%', minWidth: '220px' }}>
+                                <div className="cooking-progress">
                                   <Progress
                                     percent={Math.round(percent)}
                                     size="small"
                                     status={percent >= 100 ? 'success' : 'active'}
-                                    style={{ marginBottom: '4px' }}
                                   />
-                                  <div style={{ fontSize: '12px', color: 'var(--muted)' }}>
+                                  <div className="cooking-countdown">
                                     {countdown}
                                   </div>
                                 </div>
@@ -1802,7 +1340,7 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
                     )}
                   </Card>
                   <Card
-                    title="Ready to sell"
+                    title={<PanelTitle icon="lucide:badge-dollar-sign">Ready to sell</PanelTitle>}
                     extra={
                       (() => {
                         const isSellingAll = activeActionIds.has('sell-all-meat');
@@ -1814,36 +1352,11 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
                               type="primary"
                               loading={isSellingAll}
                               disabled={readyMeats.length === 0 || activeActionIds.size > 0}
-                              style={{ minWidth: isSellingAll ? 85 : 60 }}
-                              icon={<Icon icon="lucide:badge-dollar-sign" width="15" height="15" />}
+                              className="action-button"
+                              icon={<InterfaceIcon icon="lucide:badge-dollar-sign" />}
                               onClick={() => {
-                                let totalPrice = 0;
-                                readyMeats.forEach(row => {
-                                  const meatItem = relation(row, 'meat_items') ?? meatById.get(String(row.meat_item_id));
-                                  const baseMeatVal = Number(meatItem?.base_meat_value ?? row.base_meat_value_snapshot ?? 0);
-                                  const spawnedW = Number(row.spawned_weight ?? 0);
-                                  const purchasePaid = Number(row.purchase_price_paid ?? 0);
-                                  const cookState = String(row.current_cooking_state ?? 'raw');
-                                  const eqId = String(row.selected_equipment_item_id ?? '');
-                                  const eqItem = equipmentById.get(eqId);
-                                  const eqMult = effectiveEquipmentMultiplierForMeat(meatItem, eqItem);
-
-                                  const saleEstimate = calculateSaleValue({
-                                    cookingState: cookState,
-                                    spawnedWeight: spawnedW,
-                                    baseMeatValue: baseMeatVal,
-                                    purchasePricePaid: purchasePaid,
-                                    categoryMultiplier: Number(meatItem?.category_multiplier ?? 1),
-                                    equipmentMultiplier: eqMult,
-                                    longCookMultiplier: Number(row.long_cook_multiplier_snapshot ?? 1),
-                                    seasonings: (row['applied_seasonings'] as { baseMultiplier: number; remainingUses: number; maximumUses: number }[]) ?? []
-                                  });
-                                  totalPrice += Number(saleEstimate.finalSellingPrice);
-                                });
-
                                 runAction(
                                   'sell-all-meat',
-                                  { type: 'SELL_ALL_MEAT', totalPrice },
                                   sellAllMeat(),
                                   'Cooked meat sold',
                                   'Failed to Sell All Meat'
@@ -1854,19 +1367,13 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
                             </Button>
                             <Button
                               size="small"
-                              style={{
-                                minWidth: isSeasoningAll ? 100 : 75,
-                                backgroundColor: '#9a6518',
-                                borderColor: '#9a6518',
-                                color: '#fff'
-                              }}
+                              className="action-button season-all-button"
                               loading={isSeasoningAll}
-                              disabled={readyMeats.length === 0 || optimisticState.ownedSeasonings.length === 0 || activeActionIds.size > 0}
-                              icon={<Icon icon="lucide:sparkles" width="15" height="15" />}
+                              disabled={readyMeats.length === 0 || state.ownedSeasonings.length === 0 || activeActionIds.size > 0}
+                              icon={<InterfaceIcon icon="lucide:sparkles" />}
                               onClick={() => {
                                 runAction(
                                   'season-all-meat',
-                                  { type: 'SEASON_ALL_MEAT' },
                                   seasonAllMeat(),
                                   'All cooked meats seasoned',
                                   'Failed to Season All Meat'
@@ -1886,7 +1393,7 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
                       columns={getMeatColumns('ready')}
                       dataSource={readyMeats}
                       pagination={{ pageSize: 6, showSizeChanger: false }}
-                      scroll={{ x: hasAnySeasonings ? 890 : 630 }}
+                      scroll={{ x: hasAnySeasonings ? interfaceDimensions.tables.ready : interfaceDimensions.tables.held }}
                     />
                   </Card>
                 </Flex>
@@ -1895,21 +1402,21 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
           },
           {
             key: 'meat-shop',
-            label: 'Meat Shop',
+            label: <span className="tab-label"><InterfaceIcon icon="lucide:store" />Meat Shop</span>,
             children: (
               <>
                 {shopControls('meat')}
-                <Card title="Available meat">
+                <Card title={<PanelTitle icon="lucide:store">Available meat</PanelTitle>}>
                   <Table
                     rowKey={(row) => String(row.id ?? row.item_id)}
                     size="small"
                     columns={meatColumns}
                     dataSource={[
-                      ...optimisticState.meats.filter((item) => item.starter_only),
-                      ...optimisticState.meatStock
+                      ...state.meats.filter((item) => item.starter_only),
+                      ...state.meatStock
                     ]}
                     pagination={{ pageSize: 12, showSizeChanger: false }}
-                    scroll={{ x: 760 }}
+                    scroll={{ x: interfaceDimensions.tables.shop }}
                   />
                 </Card>
               </>
@@ -1917,18 +1424,18 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
           },
           {
             key: 'seasoning-shop',
-            label: 'Seasoning Shop',
+            label: <span className="tab-label"><InterfaceIcon icon="lucide:leaf" />Seasoning Shop</span>,
             children: (
               <>
                 {shopControls('seasoning')}
-                <Card title="Available seasonings">
+                <Card title={<PanelTitle icon="lucide:leaf">Available seasonings</PanelTitle>}>
                   <Table
                     rowKey={(row) => String(row.id ?? row.item_id)}
                     size="small"
                     columns={seasoningColumns}
-                    dataSource={optimisticState.seasoningStock}
+                    dataSource={state.seasoningStock}
                     pagination={{ pageSize: 10, showSizeChanger: false }}
-                    scroll={{ x: 760 }}
+                    scroll={{ x: interfaceDimensions.tables.shop }}
                   />
                 </Card>
               </>
@@ -1936,32 +1443,32 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
           },
           {
             key: 'equipment-shop',
-            label: 'Equipment Shop',
+            label: <span className="tab-label"><InterfaceIcon icon="lucide:utensils" />Equipment Shop</span>,
             children: (
-              <Card title="Equipment catalog">
+              <Card title={<PanelTitle icon="lucide:utensils">Equipment catalog</PanelTitle>}>
                 <Table
                   rowKey="id"
                   size="small"
                   columns={equipmentColumns}
-                  dataSource={optimisticState.equipment}
+                  dataSource={state.equipment}
                   pagination={{ pageSize: 12, showSizeChanger: false }}
-                  scroll={{ x: 860 }}
+                  scroll={{ x: interfaceDimensions.tables.equipment }}
                 />
               </Card>
             )
           },
           {
             key: 'inventory',
-            label: 'Inventory',
+            label: <span className="tab-label"><InterfaceIcon icon="lucide:archive" />Inventory</span>,
             children: (
               <div className="panel-grid">
-                <Card title="Owned equipment">
+                <Card title={<PanelTitle icon="lucide:archive">Owned equipment</PanelTitle>}>
                   <Table<Row>
                     rowKey={(row) => String(row.equipment_item_id)}
                     size="small"
-                    dataSource={optimisticState.ownedEquipment}
+                    dataSource={state.ownedEquipment}
                     pagination={false}
-                    scroll={{ x: 600 }}
+                    scroll={{ x: interfaceDimensions.tables.inventory }}
                     columns={[
                       {
                         title: 'Equipment',
@@ -1985,7 +1492,7 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
                       },
                       {
                         title: '',
-                        width: 120,
+                        width: interfaceDimensions.columns.action,
                         render: (_, row) => {
                           const eqId = String(row.equipment_item_id);
                           const isDestroying = activeActionIds.has(`destroy-equipment-${eqId}`);
@@ -1996,11 +1503,10 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
                                 danger
                                 loading={isDestroying}
                                 disabled={activeActionIds.size > 0}
-                                style={{ minWidth: isDestroying ? 95 : 60 }}
+                                className="action-button"
                                 onClick={() =>
                                   runAction(
                                     `destroy-equipment-${eqId}`,
-                                    { type: 'DESTROY_EQUIPMENT', equipmentId: eqId },
                                     destroyEquipment(eqId),
                                     'Equipment destroyed',
                                     'Failed to Destroy Equipment'
@@ -2016,13 +1522,13 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
                     ]}
                   />
                 </Card>
-                <Card title="Owned seasonings">
+                <Card title={<PanelTitle icon="lucide:package">Owned seasonings</PanelTitle>}>
                   <Table<Row>
                     rowKey="id"
                     size="small"
-                    dataSource={optimisticState.ownedSeasonings}
+                    dataSource={state.ownedSeasonings}
                     pagination={{ pageSize: 8, showSizeChanger: false }}
-                    scroll={{ x: 600 }}
+                    scroll={{ x: interfaceDimensions.tables.inventory }}
                     columns={[
                       {
                         title: 'Seasoning',
@@ -2041,27 +1547,20 @@ function ReadyDashboard({ model }: { model: SignedInModel }) {
                       },
                       {
                         title: '',
-                        width: 120,
+                        width: interfaceDimensions.columns.action,
                         render: (_, row) => {
                           const seasoningInstId = String(row.id);
                           const isSellingSeasoning = activeActionIds.has(`sell-seasoning-${seasoningInstId}`);
-                          const sItem = relation(row, 'seasoning_items');
-                          const refund = getSeasoningSellRefund(
-                            Number(sItem?.purchase_price ?? 0),
-                            Number(row.remaining_uses ?? 0),
-                            Number(row.maximum_uses ?? 5)
-                          );
                           return (
                             <div className="table-actions">
                               <Button
                                 size="small"
                                 loading={isSellingSeasoning}
                                 disabled={activeActionIds.size > 0}
-                                style={{ minWidth: isSellingSeasoning ? 85 : 60 }}
+                                className="action-button"
                                 onClick={() =>
                                   runAction(
                                     `sell-seasoning-${seasoningInstId}`,
-                                    { type: 'SELL_SEASONING', seasoningInstanceId: seasoningInstId, estimatedRefund: refund },
                                     sellSeasoning(seasoningInstId),
                                     'Seasoning sold',
                                     'Failed to Sell Seasoning'

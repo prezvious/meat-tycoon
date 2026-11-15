@@ -273,7 +273,7 @@ export function parseMeatCatalogWithProfiles(markdown, weightMarkdown = '') {
     });
   }
 
-  return dedupeById(meats);
+  return requireUniqueIds(meats, 'base-meat-values.md');
 }
 
 export function parseWeightProfileAssignments(markdown) {
@@ -368,7 +368,7 @@ export function parseEquipmentCatalog(markdown) {
     });
   }
 
-  return dedupeById(equipment);
+  return requireUniqueIds(equipment, 'equipment-list.md');
 }
 
 function isAdditionalMeatLine(line) {
@@ -459,7 +459,7 @@ export function parseSeasoningCatalog(markdown) {
     });
   }
 
-  return dedupeById(seasonings);
+  return requireUniqueIds(seasonings, 'seasoning-list.md');
 }
 
 export function parseWeightProfiles(markdown) {
@@ -497,12 +497,16 @@ export function parseWeightProfiles(markdown) {
   return profiles;
 }
 
-function dedupeById(rows) {
+function requireUniqueIds(rows, source) {
   const byId = new Map();
   for (const row of rows) {
-    if (!byId.has(row.id)) {
-      byId.set(row.id, row);
+    const previous = byId.get(row.id);
+    if (previous) {
+      const first = previous.category ?? previous.equipmentType ?? previous.seasoningType;
+      const second = row.category ?? row.equipmentType ?? row.seasoningType;
+      throw new Error(`${source}: duplicate catalog ID ${row.id} in ${first} and ${second}.`);
     }
+    byId.set(row.id, row);
   }
   return [...byId.values()];
 }

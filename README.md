@@ -97,3 +97,11 @@ Individual checks can also be run:
 * **Linter:** `npm run lint`
 * **Type Checker:** `npm run typecheck`
 * **Production Build:** `npm run build`
+
+## Audited gameplay contracts
+
+The application requires migration `0012_audit_gameplay_contracts.sql` and the corrected catalog seed. The dashboard displays authoritative database state, including the complete unsold inventory and decimal-text currency. Purchases and sales show loading indicators until the saved result arrives.
+
+Guests can attach email or Google from the dashboard without signing out. Email attachment requires verification before setting a password. Existing account progress is not merged. Session refresh runs in Next.js middleware, and authentication callbacks return only to the dashboard.
+
+See `supabase/README.md` for migration notes and manual acceptance checks. Database and browser checks must be completed before treating the integration as verified.

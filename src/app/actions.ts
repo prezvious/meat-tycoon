@@ -2,13 +2,10 @@
 
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
-import { hasSupabaseConfig } from '@/lib/supabase/env';
+import { hasSupabaseConfig } from '@/lib/supabase/env.mjs';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 
-type ActionResult = {
-  ok: boolean;
-  message?: string;
-};
+type ActionResult = { ok: true; message?: string } | { ok: false; message: string };
 
 async function configuredClient() {
   if (!hasSupabaseConfig()) {
@@ -18,7 +15,7 @@ async function configuredClient() {
   }
 
   return {
-    supabase: await createSupabaseServerClient()
+    supabase: await createSupabaseServerClient({ writable: true })
   } as const;
 }
 
@@ -31,9 +28,10 @@ async function currentUser() {
   if ('error' in client) return { client, user: null };
 
   const {
-    data: { user }
+    data: { user }, error
   } = await client.supabase.auth.getUser();
 
+  if (error && error.name !== 'AuthSessionMissingError') return { client: { error: error.message }, user: null };
   return { client, user };
 }
 
@@ -50,6 +48,26 @@ async function runRpc(name: string, args?: Record<string, unknown>): Promise<Act
   return { ok: true };
 }
 
+async function initializeSession(supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>): Promise<ActionResult> {
+  const { error } = await supabase.rpc('initialize_player_save');
+  if (error) return { ok: false, message: error.message };
+  revalidatePath('/');
+  return { ok: true };
+}
+
+function authCallbackUrl() {
+  return new URL('/auth/callback', process.env.NEXT_PUBLIC_SITE_URL?.trim() || 'http://localhost:3000').href;
+}
+
+export async function setAccountPassword(password: string): Promise<ActionResult> {
+  const { client, user } = await currentUser();
+  if ('error' in client) return { ok: false, message: client.error };
+  if (!user?.email_confirmed_at || user.is_anonymous) return { ok: false, message: 'Verify your email first.' };
+  const { error } = await client.supabase.auth.updateUser({ password });
+  if (error) return { ok: false, message: error.message };
+  return initializeSession(client.supabase);
+}
+
 export async function startGuestSession(): Promise<ActionResult> {
   const client = await configuredClient();
   if ('error' in client) return { ok: false, message: client.error };
@@ -57,9 +75,7 @@ export async function startGuestSession(): Promise<ActionResult> {
   const { error } = await client.supabase.auth.signInAnonymously();
   if (error) return { ok: false, message: error.message };
 
-  await client.supabase.rpc('initialize_player_save');
-  revalidatePath('/');
-  return { ok: true };
+  return initializeSession(client.supabase);
 }
 
 export async function signInWithPassword(email: string, password: string): Promise<ActionResult> {
@@ -69,9 +85,7 @@ export async function signInWithPassword(email: string, password: string): Promi
   const { error } = await client.supabase.auth.signInWithPassword({ email, password });
   if (error) return { ok: false, message: error.message };
 
-  await client.supabase.rpc('initialize_player_save');
-  revalidatePath('/');
-  return { ok: true };
+  return initializeSession(client.supabase);
 }
 
 export async function signUpWithPassword(email: string, password: string): Promise<ActionResult> {
@@ -79,17 +93,10 @@ export async function signUpWithPassword(email: string, password: string): Promi
   if ('error' in client) return { ok: false, message: client.error };
 
   if (user?.is_anonymous) {
-    const { error } = await client.supabase.auth.updateUser({ email, password });
-    if (error) {
-      return { ok: false, message: /already|registered|exists/i.test(error.message) ? accountUsedMessage() : error.message };
-    }
-
-    await client.supabase.rpc('initialize_player_save');
-    revalidatePath('/');
-    return { ok: true };
+    return { ok: false, message: 'Verify your email from the guest dashboard before setting a password.' };
   }
 
-  const { error, data } = await client.supabase.auth.signUp({ email, password });
+  const { error, data } = await client.supabase.auth.signUp({ email, password, options: { emailRedirectTo: authCallbackUrl() } });
   if (error) {
     return { ok: false, message: /already|registered|exists/i.test(error.message) ? accountUsedMessage() : error.message };
   }
@@ -97,16 +104,15 @@ export async function signUpWithPassword(email: string, password: string): Promi
     return { ok: false, message: accountUsedMessage() };
   }
 
-  await client.supabase.rpc('initialize_player_save');
-  revalidatePath('/');
-  return { ok: true };
+  if (!data.session) return { ok: true, message: 'Check your email to confirm your account, then sign in.' };
+  return initializeSession(client.supabase);
 }
 
 export async function sendMagicLink(email: string): Promise<ActionResult> {
   const { client, user } = await currentUser();
   if ('error' in client) return { ok: false, message: client.error };
 
-  const redirectTo = `${process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000'}/auth/callback`;
+  const redirectTo = authCallbackUrl();
   if (user?.is_anonymous) {
     const { error } = await client.supabase.auth.updateUser(
       { email },
@@ -136,9 +142,9 @@ export async function sendMagicLink(email: string): Promise<ActionResult> {
 
 export async function signInWithGoogle() {
   const { client, user } = await currentUser();
-  if ('error' in client) return redirect('/');
+  if ('error' in client) return redirect('/auth/error');
 
-  const redirectTo = `${process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000'}/auth/callback`;
+  const redirectTo = authCallbackUrl();
   const { data, error } = user?.is_anonymous
     ? await client.supabase.auth.linkIdentity({
         provider: 'google',
@@ -154,7 +160,7 @@ export async function signInWithGoogle() {
       });
 
   if (error || !data.url) {
-    redirect('/');
+    redirect('/auth/error');
   }
 
   redirect(data.url);

@@ -151,3 +151,8 @@ test('extra meat lists produce non-playable cooking preview rows with suffixed d
   assert.equal(preview.every((row) => row.enabled === false), true);
   assert.equal(preview.every((row) => row.defaultWeightKg >= 1), true);
 });
+
+test('conflicting equipment names are rejected with their document and categories', async () => {
+  const { parseEquipmentCatalog } = await import('../src/lib/catalog/catalog-parser.mjs');
+  assert.throws(() => parseEquipmentCatalog('### Fryers\n* Pan ($15.00). Equipment price in USD. Price multiplier: 0.25x.\n### Cooktops\n* Pan ($10.00). Equipment price in USD. Price multiplier: 0.20x.'), /equipment-list.md.*pan.*Fryers.*Cooktops/);
+});

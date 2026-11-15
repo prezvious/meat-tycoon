@@ -712,7 +712,7 @@ Jackpot possible but very rare
 
 ## Weight Profile Parameters
 
-These parameters are the concrete roll inputs used by the implementation.
+These parameters are authored inputs. Before seeding, the parser normalizes body minima and tail anchors to at least 1 kg. A body maximum at or below 1 kg becomes 3 kg; other maxima remain above the normalized minimum. Body rarity thresholds are recomputed from that normalized range. The global rarity labels use absolute weight thresholds in the database.
 
 | Profile ID | Body Min Kg | Body Max Kg | Body Shape | Large Threshold Kg | Heavy Threshold Kg | Massive Threshold Kg | Tail Chance | Tail Anchor Kg | Tail Alpha |
 | ---------- | ----------: | ----------: | ---------: | -----------------: | -----------------: | -------------------: | ----------: | -------------: | ---------: |
@@ -780,15 +780,9 @@ Beef Brisket can jackpot, but usually medium/heavy.
 A5 Kobe can jackpot, but extreme jackpot should be ultra rare.
 ```
 
-## Weight Profile Should Not Control Base Meat Value
+## Effective base values use expected profile weight
 
-Weight profile controls spawned weight behavior.
-
-Base meat value controls normal selling strength.
-
-Purchase price controls access.
-
-These three systems should stay separate.
+The authored base value supplies a minimum selling strength. The parser can raise it using expected normalized profile weight and the stage break-even target. It never lowers the authored base value. Purchase prices remain fixed. The effective seeded value is snapshotted when meat is bought, so reseeding does not reprice already-owned meat.
 
 ```text
 Purchase Price = cost to roll

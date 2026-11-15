@@ -23,20 +23,24 @@
     "@supabase/ssr": "^0.6.1",
     "@supabase/supabase-js": "^2.47.10",
     "antd": "^5.22.5",
-    "next": "^15.0.3",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
-    "zod": "^3.23.8"
+    "next": "15.5.29",
+    "react": "19.2.9",
+    "react-dom": "19.2.9",
+    "zod": "^3.23.8",
+    "@ant-design/cssinjs": "1.24.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.1",
     "@types/react": "^19.0.1",
     "@types/react-dom": "^19.0.1",
     "eslint": "^9.16.0",
-    "eslint-config-next": "^15.0.3",
+    "eslint-config-next": "15.5.29",
     "typescript": "^5.7.2"
   },
   "overrides": {
-    "postcss": "^8.5.10"
+    "postcss": "^8.5.10",
+    "next": {
+      "sharp": "0.35.5"
+    }
   }
 }
