@@ -1,7 +1,6 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import { redirect } from 'next/navigation';
 import { hasSupabaseConfig } from '@/lib/supabase/env.mjs';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 
@@ -20,7 +19,7 @@ async function configuredClient() {
 }
 
 function accountUsedMessage() {
-  return 'That account is already used. Sign in to that account or use a different email or provider.';
+  return 'That account is already used. Sign in to that account or use a different email.';
 }
 
 async function currentUser() {
@@ -138,32 +137,6 @@ export async function sendMagicLink(email: string): Promise<ActionResult> {
 
   if (error) return { ok: false, message: error.message };
   return { ok: true, message: 'Check your email for the sign-in link.' };
-}
-
-export async function signInWithGoogle() {
-  const { client, user } = await currentUser();
-  if ('error' in client) return redirect('/auth/error');
-
-  const redirectTo = authCallbackUrl();
-  const { data, error } = user?.is_anonymous
-    ? await client.supabase.auth.linkIdentity({
-        provider: 'google',
-        options: {
-          redirectTo
-        }
-      })
-    : await client.supabase.auth.signInWithOAuth({
-        provider: 'google',
-        options: {
-          redirectTo
-        }
-      });
-
-  if (error || !data.url) {
-    redirect('/auth/error');
-  }
-
-  redirect(data.url);
 }
 
 export async function signOut() {

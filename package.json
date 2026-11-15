@@ -14,6 +14,7 @@
     "catalog:extra-cooking-preview": "node scripts/generate-extra-cooking-preview.mjs --write",
     "simulate:weights": "node scripts/simulate-weight-system.mjs --samples=100000000",
     "seed:catalog": "node --env-file=.env.local scripts/seed-catalog.mjs",
+    "seed:sql": "node scripts/seed-catalog.mjs --sql supabase/seed.sql",
     "verify": "npm run catalog:verify && npm run test && npm run lint && npm run typecheck && npm run build"
   },
   "dependencies": {

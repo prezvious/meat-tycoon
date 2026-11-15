@@ -45,7 +45,6 @@ import {
   sellAllMeat,
   sellMeat,
   sellSeasoning,
-  signInWithGoogle,
   signInWithPassword,
   signOut,
   signUpWithPassword,
@@ -356,15 +355,6 @@ function SignedOut() {
               }
             />
 
-            <form action={signInWithGoogle}>
-              <Button
-                block
-                htmlType="submit"
-                icon={<InterfaceIcon icon="logos:google-icon" />}
-              >
-                Continue with Google
-              </Button>
-            </form>
           </div>
         </Card>
       </div>
